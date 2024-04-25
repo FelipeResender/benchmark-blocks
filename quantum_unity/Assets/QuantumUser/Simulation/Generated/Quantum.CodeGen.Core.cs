@@ -9576,24 +9576,6 @@ namespace Quantum {
         serializer.Stream.Serialize(&p->Val);
     }
   }
-  [StructLayout(LayoutKind.Explicit)]
-  public unsafe partial struct ComponentTest512 : Quantum.IComponent {
-    public const Int32 SIZE = 4;
-    public const Int32 ALIGNMENT = 4;
-    [FieldOffset(0)]
-    public Int32 Val;
-    public override Int32 GetHashCode() {
-      unchecked { 
-        var hash = 19157;
-        hash = hash * 31 + Val.GetHashCode();
-        return hash;
-      }
-    }
-    public static void Serialize(void* ptr, FrameSerializer serializer) {
-        var p = (ComponentTest512*)ptr;
-        serializer.Stream.Serialize(&p->Val);
-    }
-  }
   public static unsafe partial class Constants {
   }
   public unsafe partial class Frame {
@@ -10598,8 +10580,6 @@ namespace Quantum {
       BuildSignalsArrayOnComponentRemoved<Quantum.ComponentTest510>();
       BuildSignalsArrayOnComponentAdded<Quantum.ComponentTest511>();
       BuildSignalsArrayOnComponentRemoved<Quantum.ComponentTest511>();
-      BuildSignalsArrayOnComponentAdded<Quantum.ComponentTest512>();
-      BuildSignalsArrayOnComponentRemoved<Quantum.ComponentTest512>();
       BuildSignalsArrayOnComponentAdded<MapEntityLink>();
       BuildSignalsArrayOnComponentRemoved<MapEntityLink>();
       BuildSignalsArrayOnComponentAdded<NavMeshAvoidanceAgent>();
@@ -11173,7 +11153,6 @@ namespace Quantum {
       typeRegistry.Register(typeof(Quantum.ComponentTest509), Quantum.ComponentTest509.SIZE);
       typeRegistry.Register(typeof(Quantum.ComponentTest510), Quantum.ComponentTest510.SIZE);
       typeRegistry.Register(typeof(Quantum.ComponentTest511), Quantum.ComponentTest511.SIZE);
-      typeRegistry.Register(typeof(Quantum.ComponentTest512), Quantum.ComponentTest512.SIZE);
       typeRegistry.Register(typeof(ComponentTypeRef), ComponentTypeRef.SIZE);
       typeRegistry.Register(typeof(DistanceJoint), DistanceJoint.SIZE);
       typeRegistry.Register(typeof(DistanceJoint3D), DistanceJoint3D.SIZE);
@@ -11239,7 +11218,7 @@ namespace Quantum {
       typeRegistry.Register(typeof(Quantum._globals_), Quantum._globals_.SIZE);
     }
     static partial void InitComponentTypeIdGen() {
-      ComponentTypeId.Reset(ComponentTypeId.BuiltInComponentCount + 493)
+      ComponentTypeId.Reset(ComponentTypeId.BuiltInComponentCount + 492)
         .AddBuiltInComponents()
         .Add<Quantum.BenchmarkSingleton>(Quantum.BenchmarkSingleton.Serialize, null, null, ComponentFlags.Singleton)
         .Add<Quantum.ComponentTest021>(Quantum.ComponentTest021.Serialize, null, null, ComponentFlags.None)
@@ -11733,7 +11712,6 @@ namespace Quantum {
         .Add<Quantum.ComponentTest509>(Quantum.ComponentTest509.Serialize, null, null, ComponentFlags.None)
         .Add<Quantum.ComponentTest510>(Quantum.ComponentTest510.Serialize, null, null, ComponentFlags.None)
         .Add<Quantum.ComponentTest511>(Quantum.ComponentTest511.Serialize, null, null, ComponentFlags.None)
-        .Add<Quantum.ComponentTest512>(Quantum.ComponentTest512.Serialize, null, null, ComponentFlags.None)
         .Finish();
     }
     [Preserve()]

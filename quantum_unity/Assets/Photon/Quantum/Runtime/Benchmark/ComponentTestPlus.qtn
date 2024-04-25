@@ -255,4 +255,3 @@ component ComponentTest508{ Int32 Val; }
 component ComponentTest509{ Int32 Val; }
 component ComponentTest510{ Int32 Val; }
 component ComponentTest511{ Int32 Val; }
-component ComponentTest512{ Int32 Val; }
