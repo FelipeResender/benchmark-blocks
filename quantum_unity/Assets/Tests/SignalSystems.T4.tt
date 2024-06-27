@@ -1,0 +1,55 @@
+<#@ template language="C#" #>
+<#@ import namespace="System.Text" #>
+<#@ import namespace="System.Collections.Generic" #>
+<#@ output extension=".cs" #>
+using Quantum;
+
+namespace Tests
+{
+<#
+    var signals = new[]
+    {
+        ("ISignalOnCollision2D", "OnCollision2D", "(Frame f, CollisionInfo2D info)", "f, info"),
+        ("ISignalOnCollisionEnter2D", "OnCollisionEnter2D", "(Frame f, CollisionInfo2D info)", "f, info"),
+        ("ISignalOnCollisionExit2D", "OnCollisionExit2D", "(Frame f, ExitInfo2D info)", "f, info"),
+        ("ISignalOnTrigger2D", "OnTrigger2D", "(Frame f, TriggerInfo2D info)", "f, info"),
+        ("ISignalOnTriggerEnter2D", "OnTriggerEnter2D", "(Frame f, TriggerInfo2D info)", "f, info"),
+        ("ISignalOnTriggerExit2D", "OnTriggerExit2D", "(Frame f, ExitInfo2D info)", "f, info"),
+        ("ISignalOnCollision3D", "OnCollision3D", "(Frame f, CollisionInfo3D info)", "f, info"),
+        ("ISignalOnCollisionEnter3D", "OnCollisionEnter3D", "(Frame f, CollisionInfo3D info)", "f, info"),
+        ("ISignalOnCollisionExit3D", "OnCollisionExit3D", "(Frame f, ExitInfo3D info)", "f, info"),
+        ("ISignalOnTrigger3D", "OnTrigger3D", "(Frame f, TriggerInfo3D info)", "f, info"),
+        ("ISignalOnTriggerEnter3D", "OnTriggerEnter3D", "(Frame f, TriggerInfo3D info)", "f, info"),
+        ("ISignalOnTriggerExit3D", "OnTriggerExit3D", "(Frame f, ExitInfo3D info)", "f, info"),
+    };
+
+    foreach (var (signalName, methodName, args, argsPass) in signals)
+    {
+#>
+    [SystemForSignalDelegate(typeof(System<#= signalName #>))]
+    public delegate void <#= signalName #>Delegate<#= args #>;
+    
+    class System<#= signalName #> : SystemSignalsOnly, <#= signalName #> {
+        public static <#= signalName #>Delegate Callback;
+        void <#= signalName #>.<#= methodName #><#= args #> {
+            Callback?.Invoke(<#= argsPass #>);
+        }
+    }
+<#
+    }
+#>
+
+    partial class PerfTestBase {
+
+        public static void ClearSignals() {
+<#
+    foreach (var (signalName, methodName, args, argsPass) in signals)
+    {
+#>
+            System<#= signalName #>.Callback = null;
+<#
+    }
+#>
+        }
+    }
+}

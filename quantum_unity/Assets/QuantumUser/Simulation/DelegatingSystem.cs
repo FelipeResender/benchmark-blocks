@@ -20,6 +20,6 @@ namespace Quantum {
   // public class PostDelegatingSystem : DelegatingSystemBase<PostDelegatingSystem> {
   // }
 
-  public class DelegatingSystem : DelegatingSystemBase<DelegatingSystem> {
+  public partial class DelegatingSystem : DelegatingSystemBase<DelegatingSystem> {
   }
 }

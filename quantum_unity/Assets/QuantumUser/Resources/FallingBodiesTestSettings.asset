@@ -1,0 +1,109 @@
+%YAML 1.1
+%TAG !u! tag:unity3d.com,2011:
+--- !u!114 &11400000
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 0}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 16aa73d2934a439e8e869736b7c957dc, type: 3}
+  m_Name: FallingBodiesTestSettings
+  m_EditorClassIdentifier: 
+  Identifier:
+    Path: QuantumUser/Resources/FallingBodiesTestSettings
+    Guid:
+      Value: 477997967600332437
+  EntitiesPerInstantiationEvent: 10
+  InstantiationEventEveryFrame: 1
+  MaxBodies: 10240
+  InitialPosition:
+    X:
+      RawValue: 0
+    Y:
+      RawValue: 0
+    Z:
+      RawValue: 29491200
+  SpreadRadius:
+    RawValue: 26214400
+  ColliderProto:
+    ShapeConfig:
+      ShapeType: 1
+      SphereRadius:
+        RawValue: 327680
+      CapsuleRadius:
+        RawValue: 0
+      CapsuleHeight:
+        RawValue: 0
+      PositionOffset:
+        X:
+          RawValue: 0
+        Y:
+          RawValue: 0
+        Z:
+          RawValue: 0
+      BoxExtents:
+        X:
+          RawValue: 327680
+        Y:
+          RawValue: 327680
+        Z:
+          RawValue: 327680
+      RotationOffset:
+        X:
+          RawValue: 0
+        Y:
+          RawValue: 0
+        Z:
+          RawValue: 0
+      UserTag: 0
+      IsPersistent: 1
+      CompoundShapes: []
+    Layer: 0
+    IsTrigger: 0
+    PhysicsMaterial:
+      Id:
+        Value: 2205947191811316436
+  BodyProto:
+    Config:
+      Value: 58
+    Mass:
+      RawValue: 65536
+    Drag:
+      RawValue: 32768
+    AngularDrag:
+      RawValue: 32768
+    CenterOfMass:
+      X:
+        RawValue: 0
+      Y:
+        RawValue: 0
+      Z:
+        RawValue: 0
+    RotationFreeze:
+      Value: 0
+    GravityScale:
+      _hasValue: 0
+      _value:
+        RawValue: 65536
+  ViewProto:
+    Current:
+      Id:
+        Value: 0
+  CallbackFlags: 512
+  RestartForce:
+    X:
+      RawValue: 0
+    Y:
+      RawValue: 0
+    Z:
+      RawValue: 0
+  RestartToque:
+    X:
+      RawValue: 26214400
+    Y:
+      RawValue: 32768000
+    Z:
+      RawValue: 39321600
