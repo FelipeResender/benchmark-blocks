@@ -52,7 +52,7 @@ namespace Quantum {
   public unsafe partial class Frame {
     public unsafe partial struct FrameEvents {
       static partial void GetEventTypeCountCodeGen(ref Int32 eventCount) {
-        eventCount = 2;
+        eventCount = 3;
       }
       static partial void GetParentEventIDCodeGen(Int32 eventID, ref Int32 parentEventID) {
         switch (eventID) {
@@ -81,37 +81,12 @@ namespace Quantum {
     }
   }
   public unsafe partial class EventLog : EventBase {
-    public new const Int32 ID = 0;
+    public new const Int32 ID = 1;
     public QStringUtf8_1024 logText;
     protected EventLog(Int32 id, EventFlags flags) : 
         base(id, flags) {
     }
     public EventLog() : 
-        base(0, EventFlags.Server|EventFlags.Client) {
-    }
-    public new QuantumGame Game {
-      get {
-        return (QuantumGame)base.Game;
-      }
-      set {
-        base.Game = value;
-      }
-    }
-    public override Int32 GetHashCode() {
-      unchecked {
-        var hash = 37;
-        hash = hash * 31 + logText.GetHashCode();
-        return hash;
-      }
-    }
-  }
-  public unsafe partial class EventWriteLog : EventBase {
-    public new const Int32 ID = 1;
-    public QStringUtf8_128 logText;
-    protected EventWriteLog(Int32 id, EventFlags flags) : 
-        base(id, flags) {
-    }
-    public EventWriteLog() : 
         base(1, EventFlags.Server|EventFlags.Client) {
     }
     public new QuantumGame Game {
@@ -125,6 +100,31 @@ namespace Quantum {
     public override Int32 GetHashCode() {
       unchecked {
         var hash = 41;
+        hash = hash * 31 + logText.GetHashCode();
+        return hash;
+      }
+    }
+  }
+  public unsafe partial class EventWriteLog : EventBase {
+    public new const Int32 ID = 2;
+    public QStringUtf8_128 logText;
+    protected EventWriteLog(Int32 id, EventFlags flags) : 
+        base(id, flags) {
+    }
+    public EventWriteLog() : 
+        base(2, EventFlags.Server|EventFlags.Client) {
+    }
+    public new QuantumGame Game {
+      get {
+        return (QuantumGame)base.Game;
+      }
+      set {
+        base.Game = value;
+      }
+    }
+    public override Int32 GetHashCode() {
+      unchecked {
+        var hash = 43;
         hash = hash * 31 + logText.GetHashCode();
         return hash;
       }

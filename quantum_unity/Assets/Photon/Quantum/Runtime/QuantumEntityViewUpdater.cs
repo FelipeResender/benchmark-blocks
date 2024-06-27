@@ -2,10 +2,13 @@ namespace Quantum {
   using Quantum.Profiling;
   using System;
   using System.Collections.Generic;
-  using System.Linq;
   using UnityEngine;
   using static QuantumUnityExtensions;
 
+  /// <summary>
+  /// The Entity View Updater is essential. An instance needs to be present to create Entity Views as the 
+  /// simulation view representations based on the <see cref="Quantum.EntityView"/> components.
+  /// </summary>
   public unsafe class QuantumEntityViewUpdater : QuantumMonoBehaviour {
     /// <summary>
     /// "Optionally provide a transform that all entity views will be parented under."
@@ -18,6 +21,12 @@ namespace Quantum {
     /// </summary>
     [InlineHelp]
     public bool AutoFindMapData = true;
+
+    /// <summary>
+    /// Configuration of the snapshot interpolation mode of EntityViews.
+    /// </summary>
+    [InlineHelp]
+    public QuantumSnapshotInterpolationTimer SnapshotInterpolation = new QuantumSnapshotInterpolationTimer();
 
     // current map
     [NonSerialized] QuantumMapData _mapData = null;
@@ -88,6 +97,7 @@ namespace Quantum {
       _observedGame = game;
 
       if (gameChanged) {
+
         for (int i = 0; i < _viewComponents.Count; i++) {
           _viewComponents[i].GameChanged(_observedGame);
         }
@@ -192,15 +202,18 @@ namespace Quantum {
       }
 
       HostProfiler.Start("QuantumEntityView.OnObservedGameUpdated");
-
-      if (game.Frames.Verified != null) {
+      var verifiedFrame = game.Frames.Verified;
+      
+      if (verifiedFrame != null) {
 
         // Add view components
         while (_viewComponentsToAdd.Count > 0) {
           var vc = _viewComponentsToAdd.Dequeue();
-          vc.Activate(game.Frames.Verified, game, null);
+          vc.Activate(verifiedFrame, game, null);
           _viewComponents.Add(vc);
         }
+        
+        SnapshotInterpolation.Advance(verifiedFrame.Number, 1f / game.Session.SessionConfig.UpdateFPS);
 
         // Update view components
         for (int i = 0; i < _viewComponents.Count; i++) {
@@ -310,13 +323,19 @@ namespace Quantum {
       // update map entities
       if (_mapData) {
         var currentMap = _mapData.Asset.Guid;
-        if (currentMap != frame.MapAssetRef.Id) {
-          // can't update map entities because of map mismatch
+        if (currentMap == frame.MapAssetRef.Id) {
+          BindMapEntities(game, frame, createBehaviour);
+        } else if (frame.Map is DynamicMap dynamicMap && dynamicMap.SourceMap.Id == currentMap) {
+          BindMapEntities(game, frame, createBehaviour);
         } else {
-          foreach (var (entity, mapEntityLink) in frame.GetComponentIterator<MapEntityLink>()) {
-            BindMapEntityIfNeeded(game, game.Frames.Predicted, entity, mapEntityLink, createBehaviour);
-          }
+          // can't update map entities because of map mismatch
         }
+      }
+    }
+
+    private void BindMapEntities(QuantumGame game, Frame frame, QuantumEntityViewBindBehaviour createBehaviour) {
+      foreach (var (entity, mapEntityLink) in frame.GetComponentIterator<MapEntityLink>()) {
+        BindMapEntityIfNeeded(game, game.Frames.Predicted, entity, mapEntityLink, createBehaviour);
       }
     }
 
@@ -440,11 +459,13 @@ namespace Quantum {
       }
 
       instance.EntityRef = handle;
-
+      //Debug.Log("Spawn called");
       if (f.Has<Transform2D>(handle)) {
-        instance.UpdateFromTransform2D(game, false, false);
+        instance.Game = game;
+        instance.UpdateFromTransform2D(game, false, false, isSpawning: true);
       } else if (f.Has<Transform3D>(handle)) {
-        instance.UpdateFromTransform3D(game, false, false);
+        instance.Game = game;
+        instance.UpdateFromTransform3D(game, false, false, isSpawning: true);
       }
 
       // add to lookup

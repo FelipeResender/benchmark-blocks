@@ -16,6 +16,7 @@
 namespace Photon.Realtime
 {
     using System;
+    using System.Net;
     using System.Text;
     using System.Collections;
     using System.Collections.Generic;
@@ -517,7 +518,6 @@ namespace Photon.Realtime
             #if SUPPORTED_UNITY
             CustomTypesUnity.Register();
             ConfigUnitySockets();
-            CheckConnectSetupWebGl();
             #endif
 
             this.State = ClientState.PeerCreated;
@@ -593,6 +593,22 @@ namespace Photon.Realtime
             }
 
             this.CheckConnectSetupWebGl();
+
+            if (IPAddress.TryParse(this.AppSettings.Server, out IPAddress address))
+            {
+                // note: this check must be done after the protocol is assigned and after CheckConnectSetupWebGl()
+                if (this.AppSettings.Protocol == ConnectionProtocol.WebSocket || this.AppSettings.Protocol == ConnectionProtocol.WebSocketSecure)
+                {
+                    Log.Error("AppSettings.Server is an IP address. Can not use WS or WSS protocols with IP addresses.", this.LogLevel, this.LogPrefix);
+                    return false;
+                }
+                if (this.AppSettings.AuthMode == AuthModeOption.AuthOnceWss)
+                {
+                    Log.Warn("AppSettings.Server is an IP address. Changing this client's AuthMode to AuthOnce.", this.LogLevel, this.LogPrefix);
+                    this.AppSettings.AuthMode = AuthModeOption.AuthOnce;
+                }
+            }
+
             if (this.AppSettings.AuthMode == AuthModeOption.AuthOnceWss)
             {
                 this.RealtimePeer.TransportProtocol = ConnectionProtocol.WebSocketSecure;
@@ -625,7 +641,7 @@ namespace Photon.Realtime
                 }
 
                 this.State = ClientState.ConnectingToNameServer;
-                Log.Info(this.ConnectLog("ConnectUsingSettings()"), LogLevel.Info, this.LogPrefix);
+                Log.Info(this.ConnectLog("ConnectUsingSettings()"),  this.LogLevel, this.LogPrefix);
             }
             else
             {
@@ -639,31 +655,10 @@ namespace Photon.Realtime
                 }
 
                 this.State = ClientState.ConnectingToMasterServer;
-                Log.Info(this.ConnectLog("ConnectUsingSettings()"), LogLevel.Info, this.LogPrefix);
+                Log.Info(this.ConnectLog("ConnectUsingSettings()"),  this.LogLevel, this.LogPrefix);
             }
 
             return true;
-        }
-
-        /// <summary>This is no longer supported. Use ConnectUsingSettings() instead.</summary>
-        [Obsolete("Use ConnectUsingSettings() instead.")]
-        public bool ConnectToMasterServer()
-        {
-            throw new NotImplementedException("ConnectToMasterServer() is obsolete. Use ConnectUsingSettings() instead.");
-        }
-
-        /// <summary>This is no longer supported. Use ConnectUsingSettings() instead.</summary>
-        [Obsolete("Use ConnectUsingSettings() instead.")]
-        public bool ConnectToNameServer()
-        {
-            throw new NotImplementedException("ConnectToNameServer() is obsolete. Use ConnectUsingSettings() instead.");
-        }
-
-        /// <summary>This is no longer supported. Use ConnectUsingSettings() instead.</summary>
-        [Obsolete("Use ConnectUsingSettings() instead.")]
-        public bool ConnectToRegionMaster(string region)
-        {
-            throw new NotImplementedException("ConnectToRegionMaster() is obsolete. Use ConnectUsingSettings() instead.");
         }
 
 
@@ -716,7 +711,7 @@ namespace Photon.Realtime
             #if UNITY_WEBGL
             if (this.RealtimePeer.TransportProtocol != ConnectionProtocol.WebSocket && this.RealtimePeer.TransportProtocol != ConnectionProtocol.WebSocketSecure)
             {
-                this.DebugReturn(LogLevel.Warning, "WebGL requires WebSockets. Switching TransportProtocol to WebSocketSecure.");
+                Log.Warn("WebGL requires WebSockets. Switching TransportProtocol to WebSocketSecure.", this.LogLevel, this.LogPrefix);
                 this.AppSettings.Protocol = ConnectionProtocol.WebSocketSecure;
             }
 
@@ -954,6 +949,11 @@ namespace Photon.Realtime
             {
                 Log.Error(string.Format("Authenticate without Token is only allowed on Name Server. Will not authenticate on {0}: {1}. State: {2}", this.Server, this.CurrentServerAddress, this.State), this.LogLevel, this.LogPrefix);
                 return false;
+            }
+
+            if (this.AuthValues != null && !this.AuthValues.AreValid())
+            {
+                Log.Warn($"AuthValues.AuthType is {this.AuthValues.AuthType} but not all mandatory parameters are set. Current GET parameters: {this.AuthValues.AuthGetParameters}", this.LogLevel, this.LogPrefix);
             }
 
             if (!string.IsNullOrEmpty(this.AppSettings.FixedRegion) && this.Server == ServerConnection.NameServer)
@@ -1543,7 +1543,24 @@ namespace Photon.Realtime
         /// <remarks>The RealtimePeer will internally check its log level before writing any messages, so likely this just logs anything that comes through.</remarks>
         public virtual void DebugReturn(LogLevel level, string message)
         {
-            Log.Error(message, this.RealtimePeer.LogLevel, this.LogPrefix);
+            switch (level)
+            {
+                case LogLevel.Off:
+                    break;
+                case LogLevel.Error:
+                    Log.Error(message, this.RealtimePeer.LogLevel, this.LogPrefix);
+                    break;
+                case LogLevel.Warning:
+                    Log.Warn(message, this.RealtimePeer.LogLevel, this.LogPrefix);
+                    break;
+                case LogLevel.Info:
+                    Log.Info(message, this.RealtimePeer.LogLevel, this.LogPrefix);
+                    break;
+                case LogLevel.Debug:
+                default:
+                    Log.Debug(message, this.RealtimePeer.LogLevel, this.LogPrefix);
+                    break;
+            }
         }
 
 
@@ -2365,7 +2382,7 @@ namespace Photon.Realtime
                 case EncryptionMode.DatagramEncryptionGCM:
                     {
                         byte[] secret1 = (byte[])encryptionData[EncryptionDataParameters.Secret1];
-                        this.RealtimePeer.InitDatagramEncryption(secret1, null, true, true);
+                        this.RealtimePeer.InitDatagramEncryption(secret1, null);
                     }
                     break;
                 default:

@@ -221,16 +221,6 @@
         <member name="M:Photon.Client.Encryption.IPhotonEncryptor.Init(System.Byte[],System.Byte[],System.Byte[],System.Boolean,System.Int32)">
             <summary>Initialize the encryptor.</summary>
         </member>
-        <member name="F:Photon.Client.Encryption.EncryptorNet.encryptorIn">
-            <summary>
-            Encryption/decryption algorithm implementation
-            </summary>
-        </member>
-        <member name="F:Photon.Client.Encryption.EncryptorNet.hmacsha256In">
-            <summary>
-            Packet authentication algorithm impelmenation
-            </summary>
-        </member>
         <member name="F:Photon.Client.EnetChannel.outgoingReliableUnsequencedNumber">
             <summary>Number for reliable unsequenced commands (separate from "standard" reliable sequenced). Used to avoid duplicates.</summary>
         </member>
@@ -263,8 +253,8 @@
         <member name="F:Photon.Client.EnetPeer.sentReliableCommands">
             <summary>One list for all channels keeps sent commands (for re-sending).</summary>
         </member>
-        <member name="P:Photon.Client.EnetPeer.sendWindowUpdateRequired">
-            <summary>Thread safe.</summary>
+        <member name="P:Photon.Client.EnetPeer.SendWindowUpdateRequired">
+            <summary>When ACKs are executed they set this. Signals changes within sentReliableCommands. Thread safe.</summary>
         </member>
         <member name="F:Photon.Client.EnetPeer.outgoingAcknowledgementsPool">
             <summary>One pool of ACK byte arrays ( 20 bytes each)  for all channels to keep acknowledgements.</summary>
@@ -273,14 +263,24 @@
             <summary>Timestamp sent by the server in last udp package (enet header).</summary>
             TODO the serverSentTime should possibly never decrease?!
         </member>
-        <member name="F:Photon.Client.EnetPeer.datagramEncryptedConnection">
-            <summary>Gets enabled by "request" from server (not by client).</summary>
+        <member name="P:Photon.Client.EnetPeer.DatagramEncryptedConnection">
+            <summary>Gets enabled by "request" from server (not by client). Thread safe.</summary>
         </member>
         <member name="F:Photon.Client.EnetPeer.PeerIdForConnect">
             <summary>Initial PeerId as used in Connect command. If EnableServerTracing is false.</summary>
         </member>
         <member name="F:Photon.Client.EnetPeer.PeerIdForConnectTrace">
             <summary>Initial PeerId to enable Photon Tracing, as used in Connect command. See: EnableServerTracing.</summary>
+        </member>
+        <member name="F:Photon.Client.EnetPeer.CommandQueue">
+            <summary>Queue of received commands. ReceiveIncomingCommands will queue commands, except ACKs which Execute immediately.</summary>
+        </member>
+        <member name="M:Photon.Client.EnetPeer.DispatchCommandQueue">
+            <summary>Handles the incoming commands which are not executed yet in the CommandQueue.</summary>
+            <remarks>
+            Must be called in DispatchIncomingCommands and SendOutgoingCommands as that queue contains ACKs (which prevent re-sends).
+            ACKs may set SendWindowUpdateRequired.
+            </remarks>
         </member>
         <member name="M:Photon.Client.EnetPeer.DispatchIncomingCommands">
             <summary>
@@ -297,17 +297,13 @@
             <returns></returns>
         </member>
         <member name="M:Photon.Client.EnetPeer.SendAcksOnly">
-            <summary>
-            gathers acks until udp-packet is full and sends it!
-            </summary>
+            <summary></summary>
+            <returns></returns>
         </member>
-        <member name="F:Photon.Client.EnetPeer.CommandQueue">
-            <summary>Queue of received commands. ReceiveIncomingCommands will queue commands, except ACKs which Execute immediately.</summary>
-        </member>
-        <member name="M:Photon.Client.EnetPeer.SendOutgoingCommands">
-            <summary>
-            gathers commands from all (out)queues until udp-packet is full and sends it!
-            </summary>
+        <member name="M:Photon.Client.EnetPeer.SendOutgoingCommands(System.Boolean)">
+            <summary>Fills one datagram to send outgoing commands (acks, ping, commands sent by game logic).</summary>
+            <param name="sendAcksOnly">Skips sending "new" commands and does not time out, when true. Default: false.</param>
+            <returns>True if there are commands not sent within the current datagram.</returns>
         </member>
         <member name="F:Photon.Client.EnetPeer.channelsToUpdateLowestSent">
             <summary>Used to store temporary values in UpdateSendWindow().</summary>
@@ -632,14 +628,8 @@
             <param name="sentTime"></param>
             <returns></returns>
         </member>
-        <member name="M:Photon.Client.NCommand.#ctor(Photon.Client.EnetPeer,System.Byte,Photon.Client.StreamBuffer,System.Byte)">
-            <summary>this variant does only create outgoing commands and increments . incoming ones are created from a DataInputStream</summary>
-        </member>
         <member name="M:Photon.Client.NCommand.Initialize(Photon.Client.EnetPeer,System.Byte,Photon.Client.StreamBuffer,System.Byte)">
             <summary>this variant does only create outgoing commands and increments . incoming ones are created from a DataInputStream</summary>
-        </member>
-        <member name="M:Photon.Client.NCommand.#ctor(Photon.Client.EnetPeer,System.Byte[],System.Int32@)">
-            <summary>reads the command values (commandHeader and command-values) from incoming bytestream and populates the incoming command*</summary>
         </member>
         <member name="T:Photon.Client.SimulationItem">
             <summary>
@@ -1154,7 +1144,7 @@
              <remarks>
              This reduces memory garbage.
              If enabled, the event provided via OnEvent(EventData photonEvent) is invalid once the callback finished.
-             That event's content will get modified. Typically this is not a problem as events are rarely cached.
+             That event's content will get modified. Typically, this is not a problem as events are rarely cached.
             
              Changing this value acquires the same lock that DispatchIncomingCommands() uses.
              </remarks>
@@ -1220,6 +1210,9 @@
              This indirectly affects unreliable commands as they are by default sent in creation order.
              It queues more on the client side than on the server.
              </remarks>
+        </member>
+        <member name="P:Photon.Client.PhotonPeer.SequenceDeltaLimitSends">
+            <summary>Obsolete. Use SendWindowSize instead.</summary>
         </member>
         <member name="P:Photon.Client.PhotonPeer.QuickResendAttempts">
             <summary>
@@ -1378,10 +1371,6 @@
         </member>
         <member name="F:Photon.Client.PhotonPeer.RandomizedSequenceNumbers">
             <summary>Initialization array, used to modify the sequence numbers of channels.</summary>
-        </member>
-        <member name="F:Photon.Client.PhotonPeer.GcmDatagramEncryption">
-            <summary>If GCM is used for DatagramEncryption.</summary>
-            <remarks>If true, the randomization-value gets added to the current value, else (CBC/old style) the randomization-value replaces the current value.</remarks>
         </member>
         <member name="P:Photon.Client.PhotonPeer.PayloadEncryptorType">
              <summary>Setter for the Payload Encryptor type. Used for next connection.</summary>
@@ -1692,6 +1681,15 @@
             <param name="randomizedSequenceNumbers">Sets if enet Sequence Numbers will be randomized or not. Preferably should be true.</param>
             <param name="chainingModeGCM">Sets if the chaining mode should be CBC (false, default) or GCM (true). GCM mode is only available with a native encryption plugin.</param>
         </member>
+        <member name="M:Photon.Client.PhotonPeer.InitDatagramEncryption(System.Byte[],System.Byte[])">
+            <summary>
+            Sets up the Datagram Encryption secrets for this connection. These should be exchanged on a WSS connection for safety.
+            </summary>
+            <param name="encryptionSecret">Secret encryption key. Must be non null.</param>
+            <param name="hmacSecret">Hmac init. May be null.</param>
+            <returns>True if Datagram Encryption could be setup</returns>
+            <exception cref="T:System.NullReferenceException">If the EncryptorType is not set properly or failed initialization.</exception>
+        </member>
         <member name="M:Photon.Client.PhotonPeer.InitPayloadEncryption(System.Byte[])">
             <summary>
             Photon's Payload Encryption secret may be set by a response from the server.
@@ -1749,7 +1747,7 @@
             
              Call this 2..20 times per second (depending on your target platform).
              </remarks>
-             <returns>The if commands are not yet sent. Udp limits it's package size, Tcp does not.</returns>
+             <returns>If commands are not yet sent. Udp limits its package size, Tcp does not.</returns>
         </member>
         <member name="M:Photon.Client.PhotonPeer.SendAcksOnly">
             <summary>
@@ -1800,7 +1798,7 @@
             <summary>Sends a custom "Message" to the server, which must be handled by a Plugin or custom Server.</summary>
             <param name="message">When passing a byte[], the client will send a Raw Message (message type 9). Else it is a message with serialization (type code 8).</param>
             <param name="sendOptions">Defines how to send the operation. Reliability, encryption and channel.</param>
-            <returns>True if the message got queued for senging.</returns>
+            <returns>True if the message got queued for sending.</returns>
             <exception cref="T:System.ArgumentException">If the message failed serialization or queueing.</exception>
         </member>
         <member name="M:Photon.Client.PhotonPeer.RegisterType(System.Type,System.Byte,Photon.Client.SerializeStreamMethod,Photon.Client.DeserializeStreamMethod)">
@@ -2512,7 +2510,7 @@
         </member>
         <member name="T:Photon.Client.Pool`1">
             <summary>
-            Simple Queue-based pool for objects. Threadsafe (will lock).
+            Simple Queue-based pool for objects. Thread-safe (will lock).
             </summary>
             <typeparam name="T">Type of the items to pool.</typeparam>
         </member>
@@ -2529,6 +2527,15 @@
         </member>
         <member name="F:Photon.Client.TPeer.ALL_HEADER_BYTES">
             <summary>TCP header combined: 9 bytes</summary>
+        </member>
+        <member name="F:Photon.Client.TPeer.lastPingActivity">
+            <summary>Timestamp of last ping activity (updated when sending to avoid sending again immediately).</summary>
+        </member>
+        <member name="F:Photon.Client.TPeer.pingRequest">
+            <summary>Re-used binary message used in the TCP protocol (WSS uses a Ping Operation due to lack of framing).</summary>
+        </member>
+        <member name="F:Photon.Client.TPeer.pingParamDict">
+            <summary>Re-used ping-Operation parameter-dict used in the WS/WSS protocol (TCP uses pingRequest).</summary>
         </member>
         <member name="F:Photon.Client.TPeer.DoFraming">
             <summary>Defines if the (TCP) socket implementation needs to do "framing".</summary>
@@ -2553,7 +2560,7 @@
             <summary>enqueues serialized operations to be sent as tcp stream / package</summary>
         </member>
         <member name="M:Photon.Client.TPeer.SendPing">
-            <summary>Sends a ping and modifies this.lastPingResult to avoid another ping for a while.</summary>
+            <summary>Queues a ping (operation or "message") and updates this.lastPingActivity to avoid another ping for a while.</summary>
         </member>
         <member name="M:Photon.Client.TPeer.ReceiveIncomingCommands(System.Byte[],System.Int32)">
             <summary>reads incoming tcp-packages to create and queue incoming commands*</summary>

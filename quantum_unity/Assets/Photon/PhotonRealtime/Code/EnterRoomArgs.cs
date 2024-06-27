@@ -1,9 +1,17 @@
-﻿using System;
-using Photon.Client;
+﻿// -----------------------------------------------------------------------------
+// <copyright company="Exit Games GmbH">
+// Photon Realtime API - Copyright (C) 2022 Exit Games GmbH
+// </copyright>
+// <summary>Room creation options.</summary>
+// <author>developer@photonengine.com</author>
+// -----------------------------------------------------------------------------
 
 
 namespace Photon.Realtime
 {
+    using System;
+
+
     /// <summary>Parameters for creating rooms.</summary>
     public class EnterRoomArgs
     {

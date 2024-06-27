@@ -97,8 +97,6 @@ namespace Tests {
     public static ComponentSpec[] WithComponents(params ComponentSpec[] components) {
       return components;
     }
-
-    
     
     public void RunTest(Func<Frame, int> test, Action<Frame> oneTimeSetUp = null, Action<Frame> setUp = null, int frameCount = 50) {
       Assert.IsNull(DelegatingSystem._Update);
@@ -165,7 +163,6 @@ namespace Tests {
       }
     }
     
-    
     public struct TestParams {
       public int  EntityCount;
       public bool ShuffleEntities;
@@ -178,8 +175,7 @@ namespace Tests {
     public struct ComponentSpec {
       public ComponentSet Components;
       public FP           Probability;
-
-
+      
       public static implicit operator ComponentSpec(Type type) {
         var set = new ComponentSet();
         set.Add(ComponentTypeId.GetComponentIndex(type));

@@ -58,9 +58,22 @@ namespace Quantum.Editor {
       var outputFolder = QuantumCodeGenSettings.CodeGenQtnFolderPath;
       var unityOutputFolder = QuantumCodeGenSettings.CodeGenUnityRuntimeFolderPath;
       
-      IEnumerable<CodeGenerator.GeneratorFile> outputFiles;
+      // since this might log from a different thread, make sure editor log is initialized properly
+      QuantumEditorLog.EnsureInitialized();
+      
+      IEnumerable<GeneratorOutputFile> outputFiles;
       try {
-        outputFiles = CodeGenerator.Generate(qtnFiles, options ?? QuantumCodeGenSettings.Options);
+        outputFiles = Generator.Generate(qtnFiles, options ?? QuantumCodeGenSettings.Options, warning => {
+          string msg = "";
+          if (!string.IsNullOrEmpty(warning.Path)) {
+            msg += $"{warning.Path}({warning.Position}): ";
+          }
+          msg += warning.Message;
+          if (!string.IsNullOrEmpty(warning.SourceCode)) {
+            msg += $"\n{warning.SourceCode}";
+          }
+          QuantumEditorLog.WarnCodeGen(msg);
+        });
       } catch (Exception ex) {
         // it seems that attempting to inspect StackTrace of the exception leads to a crash in Unity;
         // throwing like this will clear the original stack trace
@@ -72,11 +85,11 @@ namespace Quantum.Editor {
         UpdateScriptsDirectory(outputFolder, outputFiles, logVerbose);  
       } else {
         
-        bool IsUnitySpecific(CodeGenerator.GeneratedFileKind kind) {
+        bool IsUnitySpecific(GeneratorOutputFileKind kind) {
           switch (kind) {
-            case CodeGenerator.GeneratedFileKind.UnityPrototypeAdapters:
-            case CodeGenerator.GeneratedFileKind.UnityPrototypeWrapper:
-            case CodeGenerator.GeneratedFileKind.UnityLegacyAssetBase:
+            case GeneratorOutputFileKind.UnityPrototypeAdapters:
+            case GeneratorOutputFileKind.UnityPrototypeWrapper:
+            case GeneratorOutputFileKind.UnityLegacyAssetBase:
               return true;
             default:
               return false;
@@ -120,6 +133,7 @@ namespace Quantum.Editor {
     public static void Run(bool verbose, GeneratorOptions options) {
       var assets = AssetDatabase.FindAssets($"t:{nameof(QuantumQtnAsset)}")
        .Select(x => AssetDatabase.GUIDToAssetPath(x))
+       .OrderBy(x => Path.GetFileNameWithoutExtension(x), StringComparer.OrdinalIgnoreCase)
        .ToArray();
       
       Run(assets, verbose, options);
@@ -129,7 +143,7 @@ namespace Quantum.Editor {
       Run(verbose, null);
     }
     
-    public static void UpdateScriptsDirectory(string outputDir, IEnumerable<CodeGenerator.GeneratorFile> files, Action<string> logProgress, Predicate<string> ignoreFilter = null) {
+    public static void UpdateScriptsDirectory(string outputDir, IEnumerable<GeneratorOutputFile> files, Action<string> logProgress, Predicate<string> ignoreFilter = null) {
       logProgress?.Invoke($"Generating scripts to {outputDir}");
       Directory.CreateDirectory(outputDir); // Create a directory first, because it might not exist.
       
@@ -213,7 +227,7 @@ namespace Quantum.Editor {
     }
 
     public static void SaveVersionToFile() {
-      File.WriteAllText(VersionFilepath, CodeGen.CodeGenerator.Version.ToString());
+      File.WriteAllText(VersionFilepath, Generator.Version.ToString());
     }
 
     public static bool VerifyVersion(bool throwError) {
@@ -226,12 +240,13 @@ namespace Quantum.Editor {
           return false;
         }
 
-        if (CodeGenerator.Version != version) {
-            if (throwError) {
-              throw new Exception($"CodeGen version expected {version} but got {CodeGenerator.Version}. Please restart UnityEditor.");
-            }
-            return false;
+        if (Generator.Version != version) {
+          if (throwError) {
+            throw new Exception($"CodeGen version expected {version} but got {Generator.Version}. Please restart UnityEditor.");
           }
+
+          return false;
+        }
       }
 
       return true;

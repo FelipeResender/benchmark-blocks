@@ -350,9 +350,9 @@ namespace Photon.Realtime
         /// <param name="propertiesToSet">PhotonHashtable of Custom Properties to be set. </param>
         /// <param name="expectedValues">If non-null, these are the property-values the server will check as condition for this update.</param>
         /// <returns>
-        /// False if propertiesToSet is null or empty or have zero string keys.
-        /// True in offline mode even if expectedProperties or webFlags are used.
-        /// If not in a room, returns true if local player and expectedValues and webFlags are null.
+        /// False if propertiesToSet is null or empty or have no keys (of allowed types).
+        /// True in offline mode even if expectedProperties are used.
+        /// If not in a room, returns true if local player and expectedValues are null.
         /// (Use this to cache properties to be sent when joining a room).
         /// Otherwise, returns if this operation could be sent to the server.
         /// </returns>

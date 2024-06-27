@@ -462,7 +462,7 @@ namespace Photon.Realtime
         /// by the very next client, looking for similar rooms.
         ///
         /// There are separate parameters for joining and creating a room.
-        /// 
+        ///
         /// Tickets: Both parameter types have a Ticket value. It is enough to set the joinRandomRoomArgs.Ticket.
         /// The createRoomArgs.Ticket will not be used.
         ///
@@ -1037,7 +1037,7 @@ namespace Photon.Realtime
         ///
         /// Rejoining room will not send any player properties. Instead client will receive up-to-date ones from server.
         /// If you want to set new player properties, do it once rejoined.
-        /// 
+        ///
         /// Tickets: If the server requires use of Tickets or if the room was entered with a Ticket initially,
         /// you will have to provide a fitting ticket. Ticket have an internal expiry date time, so they
         /// may become unusable for a rejoin.
@@ -1113,8 +1113,8 @@ namespace Photon.Realtime
         /// <param name="propertiesToSet">PhotonHashtable of Custom Properties that changes.</param>
         /// <param name="expectedProperties">Provide some keys/values to use as condition for setting the new values. Client must be in room.</param>
         /// <returns>
-        /// False if propertiesToSet is null or empty or have zero string keys.
-        /// If not in a room, returns true if local player and expectedProperties and webFlags are null.
+        /// False if propertiesToSet is null or empty or have no keys (of allowed types).
+        /// If not in a room, returns true if local player and expectedProperties are null.
         /// False if actorNr is lower than or equal to zero.
         /// Otherwise, returns if the operation could be sent to the server.
         /// </returns>

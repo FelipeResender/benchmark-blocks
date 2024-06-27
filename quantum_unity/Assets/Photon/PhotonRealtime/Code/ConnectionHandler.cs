@@ -38,7 +38,8 @@ namespace Photon.Realtime
         /// Photon client to log information and statistics from.
         /// </summary>
         public RealtimeClient Client { get; set; }
-
+        
+        /// <summary>Optional string identifier for the instance (for debugging).</summary>
         public string Id;
 
         /// <summary>Option to let the fallback thread call Disconnect after the KeepAliveInBackground time. Default: false.</summary>
@@ -64,12 +65,20 @@ namespace Photon.Realtime
         /// <summary>Indicates that the app is closing. Set in OnApplicationQuit().</summary>
         [NonSerialized]
         public static bool AppQuits;
+
+        /// <summary>Indicates that the (Unity) app is Paused. This means the main thread is not running.</summary>
         [NonSerialized]
         public static bool AppPause;
+        
+        /// <summary>Indicates that the app was paused within the last 5 seconds.</summary>
         [NonSerialized]
         public static bool AppPauseRecent;
+        
+        /// <summary>Indicates that the app is not in focus.</summary>
         [NonSerialized]
         public static bool AppOutOfFocus;
+        
+        /// <summary>Indicates that the app was out of focus within the last 5 seconds.</summary>
         [NonSerialized]
         public static bool AppOutOfFocusRecent;
 
@@ -79,7 +88,12 @@ namespace Photon.Realtime
 
         private Timer stateTimer;
 
-
+        /// <summary>
+        /// Creates an instance of the ConnectionHandler, assigns the given client. In Unity this uses a single GameObject to store all components on and applies DontDestroyOnLoad.
+        /// </summary>
+        /// <param name="client">The client to handle.</param>
+        /// <param name="id">Optional ID for this handle (could be based / related to the client instance).</param>
+        /// <returns></returns>
         public static ConnectionHandler BuildInstance(RealtimeClient client, string id = null)
         {
             ConnectionHandler result;
@@ -92,18 +106,24 @@ namespace Photon.Realtime
                 {
                     DontDestroyOnLoad(go);
                 }
-                result = go.AddComponent<ConnectionHandler>();
             }
-            else
-            {
-                result = go.GetComponent<ConnectionHandler>();
-            }
+            result = go.AddComponent<ConnectionHandler>();
             #else
             result = new ConnectionHandler();
             #endif
             result.Id = id;
             result.Client = client;
             return result;
+        }
+
+        /// <summary>Stopping the fallback thread. In Unity, calls Destroy(this).</summary>
+        public void RemoveInstance()
+        {
+            #if SUPPORTED_UNITY
+            Destroy(this);
+            #else
+            this.StopFallbackSendAckThread();
+            #endif
         }
 
 
@@ -113,12 +133,11 @@ namespace Photon.Realtime
 
         #if UNITY_2019_4_OR_NEWER
 
-        /// <summary>
-        /// Resets statics for Domain Reload
-        /// </summary>
+        /// <summary>Resets static values to replace domain reload.</summary>
         [RuntimeInitializeOnLoadMethod(RuntimeInitializeLoadType.SubsystemRegistration)]
         static void StaticReset()
         {
+            go = null;
             AppQuits = false;
             AppPause = false;
             AppPauseRecent = false;
@@ -128,21 +147,23 @@ namespace Photon.Realtime
 
         #endif
 
-
+        /// <summary>Startup check if a Client is set (which is mandatory).</summary>
         protected virtual void Start()
         {
-            if (Client == null)
+            if (this.Client == null)
             {
                 UnityEngine.Debug.LogError("A ConnectionHandler should not be put into a scene. It is created by RealtimeClient.ConnectUsingSettings().", this);
             }
         }
-
+        
+        /// <summary>Starts the fallback thread automatically.</summary>
         protected virtual void OnEnable()
         {
             this.StartFallbackSendAckThread();
         }
 
-
+        
+        /// <summary>Stops the fallback thread automatically.</summary>
         protected virtual void OnDisable()
         {
             this.StopFallbackSendAckThread();
@@ -251,13 +272,11 @@ namespace Photon.Realtime
             this.FallbackThreadRunning = false;
         }
 
-
+        /// <summary>Used in WebGL builds which can't call RealtimeFallback(object state = null) with the state context parameter.</summary>
         public void RealtimeFallbackInvoke()
         {
             this.RealtimeFallback();
         }
-
-
 
         /// <summary>A thread which runs independent from the Update() calls. Keeps connections online while loading or in background. See <see cref="KeepAliveInBackground"/>.</summary>
         public void RealtimeFallback(object state = null)
@@ -268,6 +287,7 @@ namespace Photon.Realtime
             }
 
 
+            //Log.Warn($"PeerId {this.Client.RealtimePeer.PeerID} RealtimeFallback {this.Client.IsConnected}. {this.Client.RealtimePeer.ConnectionTime} - {this.Client.RealtimePeer.Stats.LastSendOutgoingTimestamp} = {this.Client.RealtimePeer.ConnectionTime - this.Client.RealtimePeer.Stats.LastSendOutgoingTimestamp}  backgroundStopwatch.ElapsedMilliseconds: {this.backgroundStopwatch.ElapsedMilliseconds.ToString("N0")}");
             if (this.Client.IsConnected && this.Client.RealtimePeer.ConnectionTime - this.Client.RealtimePeer.Stats.LastSendOutgoingTimestamp > 100)
             {
                 if (!this.didSendAcks)
@@ -288,11 +308,16 @@ namespace Photon.Realtime
 
                 this.didSendAcks = true;
                 this.CountSendAcksOnly++;
+
                 this.Client.RealtimePeer.SendAcksOnly();
             }
             else
             {
                 // not connected or the LastSendOutgoingTimestamp was below the threshold
+                if (this.backgroundStopwatch.IsRunning)
+                {
+                    this.backgroundStopwatch.Reset();
+                }
                 this.didSendAcks = false;
             }
         }
@@ -335,41 +360,63 @@ namespace Photon.Realtime
         //
         // System/Platform -> should be in other analytic values (not this)
 
+        
+        /// <summary>Version of the SystemConnectionSummary type.</summary>
         public readonly byte Version = 0;
-
+        
+        /// <summary>Which protocol is used. Refer to ConnectionProtocol.</summary>
         public byte UsedProtocol;
 
+        /// <summary>True if the Unity app is closing / shut down.</summary>
         public bool AppQuits;
+        
+        /// <summary>True if the Unity app is paused.</summary>
         public bool AppPause;
+        /// <summary>True if the Unity app was paused recently (past 5 sec).</summary>
         public bool AppPauseRecent;
+        
+        /// <summary>True if the Unity app is out of focus / minimized.</summary>
         public bool AppOutOfFocus;
-
+        /// <summary>True if the Unity app was out of focus / minimized recently (past 5 sec).</summary>
         public bool AppOutOfFocusRecent;
-        public bool NetworkReachable;
-        public bool ErrorCodeFits;
-        public bool ErrorCodeWinSock;
 
+        /// <summary>True if the Unity engine tells us the network is reachable.</summary>
+        public bool NetworkReachable;
+        
+        /// <summary>True if the Socket-level error code fits into the usual byte "budget".</summary>
+        public bool ErrorCodeFits;
+        /// <summary>True if the Socket-level error code is WinSock based.</summary>
+        public bool ErrorCodeWinSock;
+        
+        /// <summary>Socket-level error code (if any is available).</summary>
         public int SocketErrorCode;
 
         private static readonly string[] ProtocolIdToName = { "UDP", "TCP", "2(N/A)", "3(N/A)", "WS", "WSS", "6(N/A)", "7WebRTC" };
 
-        private class SCSBitPos
+        internal class SCSBitPos
         {
             /// <summary>28 and up. 4 bits.</summary>
-            public const int Version = 28;
+            internal const int Version = 28;
             /// <summary>25 and up. 3 bits.</summary>
-            public const int UsedProtocol = 25;
-            public const int EmptyBit = 24;
-
-            public const int AppQuits = 23;
-            public const int AppPause = 22;
-            public const int AppPauseRecent = 21;
-            public const int AppOutOfFocus = 20;
-
-            public const int AppOutOfFocusRecent = 19;
-            public const int NetworkReachable = 18;
-            public const int ErrorCodeFits = 17;
-            public const int ErrorCodeWinSock = 16;
+            internal const int UsedProtocol = 25;
+            /// <summary>Position of an empty bit.</summary>
+            internal const int EmptyBit = 24;
+            /// <summary>App Quits was called bit.</summary>
+            internal const int AppQuits = 23;
+            /// <summary>App Pause was called bit.</summary>
+            internal const int AppPause = 22;
+            /// <summary>App Quits was called recently bit.</summary>
+            internal const int AppPauseRecent = 21;
+            /// <summary>App not in focus bit.</summary>
+            internal const int AppOutOfFocus = 20;
+            /// <summary>App not in focus recently bit.</summary>
+            internal const int AppOutOfFocusRecent = 19;
+            /// <summary>Unity signals network is reachable bit.</summary>
+            internal const int NetworkReachable = 18;
+            /// <summary>ErrorCode is small enough to fit bit.</summary>
+            internal const int ErrorCodeFits = 17;
+            /// <summary>Error code is of WinSock type bit.</summary>
+            internal const int ErrorCodeWinSock = 16;
         }
 
 
@@ -426,7 +473,7 @@ namespace Photon.Realtime
         }
 
         /// <summary>
-        /// Turns the SystemConnectionSummary into an integer, which can be be used for analytics purposes. It contains a lot of info and can be used to instantiate a new SystemConnectionSummary.
+        /// Turns the SystemConnectionSummary into an integer, which can be used for analytics purposes. It contains a lot of info and can be used to instantiate a new SystemConnectionSummary.
         /// </summary>
         /// <returns>Compact representation of the context for a disconnect issue.</returns>
         public int ToInt()
@@ -481,20 +528,22 @@ namespace Photon.Realtime
         }
 
 
-        public static bool GetBit(ref int value, int bitpos)
+        /// <summary>Gets a specific bit out of the value at the given position.</summary>
+        internal static bool GetBit(ref int value, int bitpos)
         {
             int result = (value >> bitpos) & 1;
             return result != 0;
         }
 
-        public static byte GetBits(ref int value, int bitpos, byte mask)
+        /// <summary>Gets bitvals out of the value at the given position.</summary>
+        internal static byte GetBits(ref int value, int bitpos, byte mask)
         {
             int result = (value >> bitpos) & mask;
             return (byte)result;
         }
 
         /// <summary>Applies bitval to bitpos (no matter value's initial bit value).</summary>
-        public static void SetBit(ref int value, bool bitval, int bitpos)
+        internal static void SetBit(ref int value, bool bitval, int bitpos)
         {
             if (bitval)
             {
@@ -507,7 +556,7 @@ namespace Photon.Realtime
         }
 
         /// <summary>Applies bitvals via OR operation (expects bits in value to be 0 initially).</summary>
-        public static void SetBits(ref int value, byte bitvals, int bitpos)
+        internal static void SetBits(ref int value, byte bitvals, int bitpos)
         {
             value |= bitvals << bitpos;
         }

@@ -113,7 +113,7 @@ namespace Quantum.Editor {
     /// <summary>
     /// Try to initialize ProjectSettings and ProjectTemplate when the scriptable object was created.
     /// </summary>
-    protected virtual void Awake() {
+    private void Awake() {
       if (ProjectSettings == null) {
         QuantumDotnetProjectSettings.TryGetGlobal(out ProjectSettings);
         EditorUtility.SetDirty(this);
@@ -150,7 +150,7 @@ namespace Quantum.Editor {
     public static void SynchronizePluginSdk(QuantumDotnetBuildSettings settings) {
       ExportPluginSdkData(settings);
       GenerateProject(settings);
-      BuildProject(settings, Path.GetFullPath($"{settings.PluginSdkPath}/{PluginSdkLibPath}"), true);
+      BuildProject(settings, Path.GetFullPath($"{settings.PluginSdkPath}/{PluginSdkLibPath}"), disablePopup: true);
     }
 
     /// <summary>
@@ -225,16 +225,12 @@ namespace Quantum.Editor {
         arguments += $" --property:CopyOutputDir={copyOutputDir}";
       }
 
-      // TODO: Before BUILD try run dotnet command, see if fails, then print error message
       if (RunDotnetCommand(arguments, out output)) {
         if (settings.ShowCompiledDllAfterBuild && disablePopup == false) {
-          var outputDir = Path.Combine(
-            settings.BinOutputPath,
-            settings.TargetConfiguration.ToString(),
-            "netstandard2.1",
-            "Quantum.Simulation.dll");
-          QuantumEditorLog.Log("Dll was saved to: " + outputDir);
-          EditorUtility.RevealInFinder(outputDir);
+          var simulationDllPath = $"{Path.GetFullPath(settings.ProjectBasePath)}/Quantum.Simulation.Dotnet/bin/Quantum.Simulation.dll";
+          if (File.Exists(simulationDllPath)) {
+            EditorUtility.RevealInFinder(simulationDllPath);
+          }
         }
       }
     }
@@ -368,20 +364,20 @@ namespace Quantum.Editor {
 
     #region Menu
 
-    [MenuItem("Tools/Quantum/Export/Generate Dotnet Quantum.Simulation Project", true, (int)QuantumEditorMenuPriority.Export + 22)]
+    [MenuItem("Tools/Quantum/Export/Dotnet Quantum.Simulation - Generate Project", true, (int)QuantumEditorMenuPriority.Export + 22)]
     public static bool GenerateDefaultProjectCheck() => TryGetGlobal(out var settings);
 
-    [MenuItem("Tools/Quantum/Export/Generate Dotnet Quantum.Simulation Project", false, (int)QuantumEditorMenuPriority.Export + 22)]
+    [MenuItem("Tools/Quantum/Export/Dotnet Quantum.Simulation - Generate Project", false, (int)QuantumEditorMenuPriority.Export + 22)]
     public static void GenerateDefaultProject() {
       if (TryGetGlobal(out var settings)) {
         GenerateProject(settings);
       }
     }
 
-    [MenuItem("Tools/Quantum/Export/Build Dotnet Quantum.Simulation Dll", true, (int)QuantumEditorMenuPriority.Export + 22)]
+    [MenuItem("Tools/Quantum/Export/Dotnet Quantum.Simulation - Build", true, (int)QuantumEditorMenuPriority.Export + 22)]
     public static bool BuildDefaultProjectCheck() => TryGetGlobal(out var settings);
 
-    [MenuItem("Tools/Quantum/Export/Build Dotnet Quantum.Simulation Dll", false, (int)QuantumEditorMenuPriority.Export + 22)]
+    [MenuItem("Tools/Quantum/Export/Dotnet Quantum.Simulation - Build", false, (int)QuantumEditorMenuPriority.Export + 22)]
     public static void BuildDefaultProject() {
       if (TryGetGlobal(out var settings)) {
         GenerateProject(settings);
@@ -389,20 +385,20 @@ namespace Quantum.Editor {
       }
     }
 
-    [MenuItem("Tools/Quantum/Export/Synchronize Quantum Plugin SDK", true, (int)QuantumEditorMenuPriority.Export + 33)]
+    [MenuItem("Tools/Quantum/Export/Plugin SDK - Sync Server Simulation", true, (int)QuantumEditorMenuPriority.Export + 33)]
     public static bool SynchronizePluginSdkCheck() => TryGetGlobal(out var settings) && settings.HasCustomPluginSdk;
 
-    [MenuItem("Tools/Quantum/Export/Synchronize Quantum Plugin SDK", false, (int)QuantumEditorMenuPriority.Export + 33)]
+    [MenuItem("Tools/Quantum/Export/Plugin SDK - Sync Server Simulation", false, (int)QuantumEditorMenuPriority.Export + 33)]
     public static void SynchronizePluginSdk() {
       if (TryGetGlobal(out var settings)) {
         SynchronizePluginSdk(settings);
       }
     }
 
-    [MenuItem("Tools/Quantum/Export/Export Quantum Plugin Data", true, (int)QuantumEditorMenuPriority.Export + 33)]
+    [MenuItem("Tools/Quantum/Export/Plugin SDK - Sync Assets Only", true, (int)QuantumEditorMenuPriority.Export + 33)]
     public static bool ExportPluginSdkDataCheck() => TryGetGlobal(out var settings) && settings.HasCustomPluginSdk;
 
-    [MenuItem("Tools/Quantum/Export/Export Quantum Plugin Data", false, (int)QuantumEditorMenuPriority.Export + 33)]
+    [MenuItem("Tools/Quantum/Export/Plugin SDK - Sync Assets Only", false, (int)QuantumEditorMenuPriority.Export + 33)]
     public static void ExportPluginSdkData() {
       if (TryGetGlobal(out var settings)) {
         ExportPluginSdkData(settings);

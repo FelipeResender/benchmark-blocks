@@ -25,18 +25,11 @@
   <PropertyGroup Condition="$(Configuration.Contains('Debug'))">
     <DefineConstants>DEBUG</DefineConstants>
     <DebugSymbols>true</DebugSymbols>
-    <CoriumConfigurationId>.Debug</CoriumConfigurationId>
   </PropertyGroup>
 
   <PropertyGroup Condition="$(Configuration.Contains('Release'))">
     <Optimize>true</Optimize>
     <!--<TreatWarningsAsErrors>true</TreatWarningsAsErrors>-->
-    <CoriumConfigurationId></CoriumConfigurationId>
-  </PropertyGroup>
-
-  <PropertyGroup>
-    <CoriumPlatformId Condition="$(TargetPlatform)=='Windows'">Windows.x64</CoriumPlatformId>
-    <CoriumPlatformId Condition="$(TargetPlatform)=='Linux'">Linux.x64</CoriumPlatformId>
   </PropertyGroup>
 
   <ItemGroup>
@@ -49,9 +42,8 @@
     <Reference Include="Quantum.Engine">
       <HintPath>../Lib/$(Configuration)/Quantum.Engine.dll</HintPath>
     </Reference>
-    <Content Include="[UnityProjectPath]/Assets/Photon/Quantum/Assemblies/Native/Quantum.Corium.$(CoriumPlatformId)$(CoriumConfigurationId).dll">
+    <Content Include="../Lib/$(Configuration)/Quantum.Json.dll">
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
-      <TargetPath>Quantum.Corium.$(CoriumPlatformId)$(CoriumConfigurationId).dll</TargetPath>
     </Content>
   </ItemGroup>
 

@@ -642,7 +642,7 @@ namespace Quantum {
   }
   [StructLayout(LayoutKind.Explicit)]
   public unsafe partial struct _globals_ {
-    public const Int32 SIZE = 640;
+    public const Int32 SIZE = 648;
     public const Int32 ALIGNMENT = 8;
     [FieldOffset(0)]
     public AssetRef<Map> Map;
@@ -662,12 +662,12 @@ namespace Quantum {
     public BitSet1024 Systems;
     [FieldOffset(248)]
     public PhysicsSceneSettings PhysicsSettings;
-    [FieldOffset(528)]
+    [FieldOffset(536)]
     public Int32 PlayerConnectedCount;
-    [FieldOffset(532)]
+    [FieldOffset(540)]
     [FramePrinter.FixedArrayAttribute(typeof(Input), 6)]
     private fixed Byte _input_[96];
-    [FieldOffset(632)]
+    [FieldOffset(640)]
     public BitSet6 PlayerLastConnectionState;
     public FixedArray<Input> input {
       get {
@@ -4981,7 +4981,7 @@ namespace Quantum {
       Native.Utils.Copy(_globals, frame._globals, sizeof(_globals_));
     }
     partial void InitGen() {
-      Initialize(this, this.SimulationConfig.Entities);
+      Initialize(this, this.SimulationConfig.Entities, 256);
       _ComponentSignalsOnAdded = new ComponentReactiveCallbackInvoker[ComponentTypeId.Type.Length];
       _ComponentSignalsOnRemoved = new ComponentReactiveCallbackInvoker[ComponentTypeId.Type.Length];
       BuildSignalsArrayOnComponentAdded<Quantum.BenchmarkSingleton>();
@@ -5790,6 +5790,7 @@ namespace Quantum {
       typeRegistry.Register(typeof(FPVector2), FPVector2.SIZE);
       typeRegistry.Register(typeof(FPVector3), FPVector3.SIZE);
       typeRegistry.Register(typeof(FrameMetaData), FrameMetaData.SIZE);
+      typeRegistry.Register(typeof(FrameTimer), FrameTimer.SIZE);
       typeRegistry.Register(typeof(HingeJoint), HingeJoint.SIZE);
       typeRegistry.Register(typeof(HingeJoint3D), HingeJoint3D.SIZE);
       typeRegistry.Register(typeof(Hit), Hit.SIZE);

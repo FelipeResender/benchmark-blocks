@@ -16,7 +16,7 @@ namespace Quantum {
     /// </summary>
     public Text FrameVerified;
     /// <summary>
-    /// Current prediceted frame.
+    /// Current predicted frame.
     /// </summary>
     public Text FramePredicted;
     /// <summary>
@@ -48,7 +48,7 @@ namespace Quantum {
     /// </summary>
     public Text NetworkOut;
     /// <summary>
-    /// The currrent input offset.
+    /// The current input offset.
     /// </summary>
     public Text InputOffset;
     /// <summary>
@@ -153,18 +153,31 @@ namespace Quantum {
       ToggleButtonText.text = state ? "Hide Stats" : "Show Stats";
     }
 
+    /// <summary>
+    /// Toggle the stats window.
+    /// </summary>
     public void Toggle() {
       SetState(!Toggles[0].activeSelf);
     }
 
+    /// <summary>
+    /// Find or load the stats windows and enable it.
+    /// </summary>
     public static void Show() {
       GetObject().SetState(true);
     }
 
+    /// <summary>
+    /// Find or load the stats windows and disable it.
+    /// </summary>
     public static void Hide() {
       GetObject().SetState(false);
     }
 
+    /// <summary>
+    /// Find or create the stats window.
+    /// </summary>
+    /// <returns>The stats window object</returns>
     public static QuantumStats GetObject() {
       QuantumStats stats;
 

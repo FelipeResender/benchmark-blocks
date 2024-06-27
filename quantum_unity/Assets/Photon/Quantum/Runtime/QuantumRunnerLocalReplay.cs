@@ -30,7 +30,7 @@ namespace Quantum {
     /// </summary>
     public float SimulationSpeedMultiplier = 1.0f;
     /// <summary>
-    /// Toggle the replay gui lable on/off.
+    /// Toggle the replay gui label on/off.
     /// </summary>
     public bool ShowReplayLabel;
     /// <summary>
@@ -38,7 +38,7 @@ namespace Quantum {
     /// </summary>
     public InstantReplaySettings InstantReplayConfig = InstantReplaySettings.Default;
     /// <summary>
-    /// Force Unity json deserialization of the deplay file even when Newtonsoft is available.
+    /// Force Unity json deserialization of the replay file even when Newtonsoft is available.
     /// Newtonsoft is very slow when compiled with IL2CPP. But Unity Json deserialization expects the byte arrays to be int array instead on base64 strings.
     /// </summary>
     public bool ForceUsingUnityJson;
@@ -48,7 +48,10 @@ namespace Quantum {
     Native.Allocator _resourceAllocator;
     IDeterministicReplayProvider _replayInputProvider;
 
-    void Start() {
+    /// <summary>
+    /// Unity start event, will start the Quantum runner and simulation after deserializing the replay file.
+    /// </summary>
+    public void Start() {
       if (_runner != null)
         return;
 
@@ -106,6 +109,9 @@ namespace Quantum {
       }
     }
 
+    /// <summary>
+    /// Unity Update event will update the simulation if a custom <see cref="SimulationSpeedMultiplier"/> was set.
+    /// </summary>
     public void Update() {
       if (QuantumRunner.Default != null && QuantumRunner.Default.Session != null) {
         // Set the session ticking to manual to inject custom delta time.
@@ -118,7 +124,7 @@ namespace Quantum {
               QuantumUnityDB.UpdateGlobal();
               break;
             case SimulationUpdateTime.EngineDeltaTime:
-              QuantumRunner.Default.Service(Time.deltaTime);
+              QuantumRunner.Default.Service(Time.deltaTime * SimulationSpeedMultiplier);
               QuantumUnityDB.UpdateGlobal();
               break;
           }

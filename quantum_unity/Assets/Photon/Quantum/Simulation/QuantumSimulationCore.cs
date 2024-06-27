@@ -2,7 +2,7 @@
 
 #region Assets/Photon/Quantum/Simulation/AssemblyAttributes.cs
 
-[assembly:Quantum.QuantumSimulationAssemblyAttribute()]
+
 
 #endregion
 
@@ -10,6 +10,8 @@
 #region Assets/Photon/Quantum/Simulation/Core/CodeGenStub.cs
 
 namespace Quantum {
+  using Photon.Deterministic;
+  using System;
   using UnityEngine;
 
   public unsafe partial struct _globals_ {
@@ -62,6 +64,15 @@ namespace Quantum {
   }
 
   public unsafe partial class Frame {
+    internal static int MaxComponents {
+      get {
+        int result = 256;
+        GetMaxComponentsCodeGen(ref result);
+        return result;
+      }
+    }
+    
+    static partial void GetMaxComponentsCodeGen(ref int maxComponents);
     partial void GetPlayerLastConnectionStateCodeGen(ref BitSetRef bitSet);
     partial void SetPlayerInputCodeGen(PlayerRef player, Input input);
     partial void ResetPhysicsCodeGen();
@@ -94,11 +105,31 @@ namespace Quantum {
       
       public static System.Type GetEventType(int eventID) {
         System.Type result = null;
+
+        // Special handling with non-code generated events
+        if (eventID == EventGameResult.ID) {
+          return typeof(EventGameResult);
+        }
+
         GetEventTypeCodeGen(eventID, ref result);
         if (result == null) {
           throw new System.ArgumentOutOfRangeException(nameof(eventID));
         }
         return result;
+      }
+
+      public EventGameResult GameResult(GameResult gameResult) {
+        if (_f.IsPredicted) {
+          // Synced event only allowed
+          return null;
+        }
+
+        var ev = _f.Context.AcquireEvent<EventGameResult>(EventGameResult.ID);
+        ev.GameResult = gameResult;
+        ev.GameResult.Frame = _f.Number;
+        _f.AddEvent(ev);
+
+        return ev;
       }
     }
   }
@@ -321,7 +352,19 @@ namespace Quantum {
   using System.Collections.Generic;
   using Photon.Deterministic;
 
+  /// <summary>
+  /// A partial static class to extend by implementing the partial method <see cref="AddCommandFactoriesUser"/>.
+  /// It's used to create the Quantum command factories when initializing the simulation, 
+  /// either <see cref="DeterministicCommand"/> or <see cref="DeterministicCommandPool{T}"/> object.
+  /// Only commands added here can be invoked by the simulation.
+  /// </summary>
   public static partial class DeterministicCommandSetup {
+    /// <summary>
+    /// Creates a list of command factories for a Quantum simulation.
+    /// </summary>
+    /// <param name="gameConfig">The used RuntimeConfig</param>
+    /// <param name="simulationConfig">The used SimulationConfig</param>
+    /// <returns>List of command factories</returns>
     public static IDeterministicCommandFactory[] GetCommandFactories(RuntimeConfig gameConfig, SimulationConfig simulationConfig) {
       var factories = new List<IDeterministicCommandFactory>() {
         // pre-defined core commands
@@ -359,16 +402,45 @@ namespace Quantum {
   /// </summary>
   /// \ingroup FrameClass
   public unsafe partial class Frame : Core.FrameBase {
-
+    /// <summary>
+    /// If set the <see cref="Quantum.SimulationConfig"/> will not be printed in the frame dump during <see cref="DumpFrame(int)"/>.
+    /// </summary>
     public const int DumpFlag_NoSimulationConfig           = 1 << 1;
+    /// <summary>
+    /// If set the <see cref="Quantum.RuntimeConfig"/> will not be printed in the frame dump during <see cref="DumpFrame(int)"/>.
+    /// </summary>
     public const int DumpFlag_NoRuntimeConfig              = 1 << 3;
+    /// <summary>
+    /// If set the <see cref="DeterministicSessionConfig"/> will not be printed in the frame dump during <see cref="DumpFrame(int)"/>.
+    /// </summary>
     public const int DumpFlag_NoDeterministicSessionConfig = 1 << 4;
+    /// <summary>
+    /// If set the <see cref="RuntimePlayer"/>s will not be printed in the frame dump during <see cref="DumpFrame(int)"/>.
+    /// </summary>
     public const int DumpFlag_NoRuntimePlayers             = 1 << 5;
+    /// <summary>
+    /// If set the Dynamic Asset DB will not be printed in the frame dump during <see cref="DumpFrame(int)"/>.
+    /// </summary>
     public const int DumpFlag_NoDynamicDB                  = 1 << 6;
+    /// <summary>
+    /// If set the Dynamic Asset DB will be dumped in readable form during <see cref="DumpFrame(int)"/>.
+    /// </summary>
     public const int DumpFlag_ReadableDynamicDB            = 1 << 7;
+    /// <summary>
+    /// If set the frame dump will print more raw values like pointers.
+    /// </summary>
     public const int DumpFlag_PrintRawValues               = 1 << 8;
+    /// <summary>
+    /// If set the frame dump will print component checksums.
+    /// </summary>
     public const int DumpFlag_ComponentChecksums           = 1 << 9;
+    /// <summary>
+    /// If set the frame dump will print Asset DB checksums.
+    /// </summary>
     public const int DumpFlag_AssetDBCheckums              = 1 << 10;
+    /// <summary>
+    /// Is set the frame dump will not print the IsVerified information.
+    /// </summary>
     public const int DumpFlag_NoIsVerified                 = 1 << 11;
 
     struct RuntimePlayerData {
@@ -432,7 +504,15 @@ namespace Quantum {
     ISignalOnPlayerDisconnected[] _ISignalOnPlayerDisconnectedSystems;
 
     /// <summary>
-    /// Access the global struct with generated values from the DSL.
+    /// Access the global read and write struct with generated variables by the Quantum DSL compiler.
+    /// <para>Globals can be declared in any .qtn file by using the global scope.</para>
+    /// <para>Like all things DSL-defined, global variables are part of the state and are fully compatible with the predict-rollback system.</para>
+    /// <para>An alternative to global variables are the Singleton Components.</para>
+    /// <example><code>
+    /// global {
+    ///   FPVector3 Foo;
+    /// }
+    /// </code></example>
     /// </summary>
     [DebuggerBrowsable(DebuggerBrowsableState.Never)]
     public _globals_* Global { [MethodImpl(MethodImplOptions.AggressiveInlining)] get => _globals;  }
@@ -484,22 +564,23 @@ namespace Quantum {
     protected override PhysicsEngineState* _physicsState3D { [MethodImpl(MethodImplOptions.AggressiveInlining)] get => &GlobalsCore->PhysicsState3D; }
 
     /// <summary>
-    /// Returns the mode that commands are commited to the simulation.
+    /// Returns the mode that commands are committed to the simulation.
     /// </summary>
     public override CommitCommandsModes CommitCommandsMode { [MethodImpl(MethodImplOptions.AggressiveInlining)] get => SimulationConfig.Entities.CommitCommandsMode; }
 
     /// <summary>
-    /// Access the signal API.\n
-    /// Signals are function signatures used as a decoupled inter-system communication API (a bit like a publisher/subscriber API or observer pattern).
+    /// Access the Quantum signal API.
+    /// <para>Signals are function signatures used as a decoupled inter-system communication API similar to a publisher/subscriber API or observer pattern.</para>
+    /// <para>Custom signals are defined in the DSL.</para>
     /// </summary>
-    /// Custom signals are defined in the DSL.
     public FrameSignals Signals;
 
     /// <summary>
-    /// Access the event API.\n
-    /// Events are a fine-grained solution to communicate things that happen inside the simulation to the rendering engine (they should never be used to modify/update part of the game state).
+    /// Access the Quantum event API.
+    /// <para>Events are a fine-grained solution to communicate from the simulation to the view. </para>
+    /// <para>Events should never be used to modify/update part of the game state.</para>
+    /// <para>Custom events are defined in the DSL.</para>
     /// </summary>
-    /// Custom events are defined in the DSL.
     public FrameEvents Events;
     
     /// <summary>
@@ -508,7 +589,7 @@ namespace Quantum {
     public new FrameContextUser Context { [MethodImpl(MethodImplOptions.AggressiveInlining)] get => (FrameContextUser)base.Context; }
 
     /// <summary>
-    /// The <see cref="RuntimeConfig"/> used for this session.
+    /// The deserialized <see cref="RuntimeConfig"/> used for this session.
     /// </summary>
     public RuntimeConfig RuntimeConfig {
       [MethodImpl(MethodImplOptions.AggressiveInlining)]
@@ -560,14 +641,18 @@ namespace Quantum {
 
     /// <summary>
     /// Retrieves the Quantum map asset. Can be set during run-time.
+    /// <para>If assigned value is different than the current one, signal <see cref="ISignalOnMapChanged"/> is raised.</para>
     /// </summary>
-    /// If assigned value is different than the current one, signal <see cref="ISignalOnMapChanged"/> is raised.
     public override sealed Map Map {
       [MethodImpl(MethodImplOptions.AggressiveInlining)]
       get => FindAsset<Map>(MapAssetRef);
       set => MapAssetRef = value;
     }
 
+    /// <summary>
+    /// Get or set the map asset reference. Can be set during run-time.
+    /// <para>If assigned value is different than the current one, signal <see cref="ISignalOnMapChanged"/> is raised.</para>
+    /// </summary>
     public AssetRef<Map> MapAssetRef {
       [MethodImpl(MethodImplOptions.AggressiveInlining)]
       get => GlobalsCore->Map;
@@ -588,7 +673,11 @@ namespace Quantum {
       }
     }
 
-      public Frame(FrameContext context, SystemBase[] systemsAll, SystemBase[] systemsRoots, DeterministicSessionConfig sessionConfig, RuntimeConfig runtimeConfig, SimulationConfig simulationConfig, FP deltaTime) : base(context) {
+    /// <summary>
+    /// Create a new frame object.
+    /// </summary>
+    public Frame(FrameContext context, SystemBase[] systemsAll, SystemBase[] systemsRoots, DeterministicSessionConfig sessionConfig, RuntimeConfig runtimeConfig, SimulationConfig simulationConfig, FP deltaTime) 
+      : base(context) {
       Assert.Check(context != null);
 
       _systemsAll   = systemsAll;
@@ -694,7 +783,6 @@ namespace Quantum {
     /// </summary>
     /// <param name="position">Center of the prediction area</param>
     /// <param name="radius">Radius of the prediction area</param>
-    /// <para>The Prediction Culling feature must be explicitly enabled in <see cref="SimulationConfig.UsePredictionArea"/>.</para>
     /// <para>This can be safely called from the main-thread.</para>
     /// <para>Prediction Culling allows developers to save CPU time in games where the player has only a partial view of the game scene.
     /// Quantum prediction and rollbacks, which are time consuming, will only run for important entities that are visible to the local player(s). Leaving anything outside that area to be simulated only once per tick with no rollbacks as soon as the inputs are confirmed from server.
@@ -749,7 +837,7 @@ namespace Quantum {
     /// If <paramref name="allocOutput"/> is set to true then a new array is allocated for the result.
     /// 
     /// Despite accepting a buffer, this method still allocates a few small temporary objects. 
-    /// <see cref="IAssetSerializer.SerializeAssets(System.Collections.Generic.IEnumerable{AssetObject})"/> is also going
+    /// <see cref="IAssetSerializer.SerializeAssets(Stream, AssetObject[])"/> is also going
     /// to allocate when serializing DynamicAssetDB, but how much depends on the serializer itself and the number of dynamic assets.
     /// </summary>
     /// <param name="mode"></param>
@@ -854,12 +942,11 @@ namespace Quantum {
 
     void SerializeRuntimePlayers(BitStream stream) {
       stream.WriteInt(_playerData.Count);
-
-      foreach (var player in _playerData.Iterator()) {
-        stream.WriteInt(player.Key);
-        stream.WriteInt(player.Value.ActorId);
-        stream.WriteInt(player.Value.PlayerSlot);
-        Context.AssetSerializer.SerializePlayer(stream, player.Value.Player);
+      foreach (var (key, value) in _playerData) {
+        stream.WriteInt(key);
+        stream.WriteInt(value.ActorId);
+        stream.WriteInt(value.PlayerSlot);
+        Context.AssetSerializer.SerializePlayer(stream, value.Player);
       }
     }
 
@@ -882,13 +969,14 @@ namespace Quantum {
     }
 
     void DeserializeDynamicAssetDB(Byte[] bytes) {
-      DynamicAssetDB.Deserialize(bytes, Context.AssetSerializer, Context.Allocator);
+      DynamicAssetDB.Deserialize(bytes, Context.AssetSerializer);
     }
 
     /// <summary>
     /// Dump the frame in human readable form into a string.
     /// </summary>
-    /// <returns>Frame representation</returns>
+    /// <param name="dumpFlags">Flags to control the output for example <see cref="DumpFlag_AssetDBCheckums"/>.</param>
+    /// <returns>Frame string representation.</returns>
     public sealed override String DumpFrame(int dumpFlags = 0) {
       var printer = new FramePrinter();
       printer.Reset(this);
@@ -922,8 +1010,8 @@ namespace Quantum {
         printer.AddLine("# PLAYERS");
         {
           printer.ScopeBegin();
-          foreach (var kv in _playerData.Iterator()) {
-            printer.AddObject($"[{kv.Key}]", kv.Value);
+          foreach (var (k, v) in _playerData) {
+            printer.AddObject($"[{k}]", v);
           }
           printer.ScopeEnd();
         }
@@ -943,8 +1031,8 @@ namespace Quantum {
         printer.AddLine("# ASSETDB CHECKSUMS");
         {
           printer.ScopeBegin();
-
-          var orderedAssets = Context.AssetDB.ResourceManager.LoadAllAssets();
+          
+          var orderedAssets = Context.ResourceManager.LoadAllAssets();
           orderedAssets.Sort((a, b) => a.Guid.CompareTo(b.Guid));
           
           foreach (var asset in orderedAssets) {
@@ -1380,13 +1468,16 @@ namespace Quantum {
     /// <returns>Player reference or null if actor id was not found</returns>
     /// The first player because multiple players from the same Photon client can join.
     public PlayerRef? ActorIdToFirstPlayer(Int32 actorId) {
-      foreach (var kvp in _playerData.Iterator()) {
-        if (kvp.Value.ActorId == actorId) {
-          return kvp.Key;
+      PlayerRef? result = null;
+      _playerData.Visit((key, value, id) => {
+        if (value.ActorId == id && result == null) {
+          result = key;
+          return false;
         }
-      }
 
-      return null;
+        return true;
+      }, actorId);
+      return result;
     }
 
     /// <summary>
@@ -1395,7 +1486,13 @@ namespace Quantum {
     /// <param name="actorId">Actor id</param>
     /// <returns>Array of player references</returns>
     public PlayerRef[] ActorIdToAllPlayers(Int32 actorId) {
-      return _playerData.Iterator().Where(x => x.Value.ActorId == actorId).Select(x => (PlayerRef)x.Key).ToArray();
+      List<PlayerRef> result = new List<PlayerRef>();
+      _playerData.Visit((key, value, id) => {
+        if (value.ActorId == id) {
+          result.Add(key);
+        }
+      }, actorId);
+      return result.ToArray();
     }
 
     public void UpdatePlayerData(IDeterministicGame game) {
@@ -1529,39 +1626,94 @@ namespace Quantum {
 namespace Quantum {
   using System;
   using Photon.Deterministic;
-  using Quantum.Core;
+
+  /// <inheritdoc cref="OnAdded(Frame, EntityRef, T*)"/>
+  /// <typeparam name="T">Component type</typeparam>
   public unsafe interface ISignalOnComponentAdded<T> : ISignal where T : unmanaged, IComponent {
+    /// <summary>
+    /// The signal is called after a component of the desired type has been added to an entity.
+    /// </summary>
+    /// <param name="f">The frame reference.</param>
+    /// <param name="entity">The entity that the component was added to.</param>
+    /// <param name="component">The component that was added.</param>
     void OnAdded(Frame f, EntityRef entity, T* component);
   }
 
+  /// <inheritdoc cref="OnRemoved(Frame, EntityRef, T*)"/>
+  /// <typeparam name="T">Component type</typeparam>
   public unsafe interface ISignalOnComponentRemoved<T> : ISignal where T : unmanaged, IComponent {
+    /// <summary>
+    /// The signal is called after a component of the desired type has been removed from an entity.
+    /// </summary>
+    /// <param name="f">The frame reference.</param>
+    /// <param name="entity">The entity that the component was removed from.</param>
+    /// <param name="component">The component that was removed.</param>
     void OnRemoved(Frame f, EntityRef entity, T* component);
-  } 
-  
+  }
+
+  /// <inheritdoc cref="OnMapChanged(Frame, AssetRef{Map})"/>
   public unsafe interface ISignalOnMapChanged : ISignal {
+    /// <summary>
+    /// This signal is called after the map has been changed by assigning a new map to <see cref="Frame.Map"/>.
+    /// </summary>
+    /// <param name="f">The frame reference</param>
+    /// <param name="previousMap">The previous map</param>
     void OnMapChanged(Frame f, AssetRef<Map> previousMap);
   }
 
+  /// <inheritdoc cref="OnEntityPrototypeMaterialized(Frame, EntityRef, EntityPrototypeRef)"/>
   public unsafe interface ISignalOnEntityPrototypeMaterialized : ISignal {
+    /// <summary>
+    /// This signal is called after an entity prototype has been materialized.
+    /// <para>During Load Map: the signal is invoked for all Entity and Entity Prototype pairs after all scene prototypes have been materialized.</para>
+    /// <para>Created with Frame.Create(): the signal is invoked immediately after the prototype has been materialized.</para>    /// <param name="f">The frame reference.</param>
+    /// </summary>
+    /// <param name="entity">The entity that was created.</param>
+    /// <param name="prototypeRef">The entity prototype that was materialized.</param>
     void OnEntityPrototypeMaterialized(Frame f, EntityRef entity, EntityPrototypeRef prototypeRef);
   }
 
+  /// <inheritdoc cref="OnPlayerConnected(Frame, PlayerRef)"/>
   public unsafe interface ISignalOnPlayerConnected : ISignal {
+    /// <summary>
+    /// The signal is called when a player has successfully joined the simulation.
+    /// <para>It's originating from the <see cref="Core.PlayerConnectedSystem"/>.</para>
+    /// <para>The connected status is based on the <see cref="DeterministicFrame.GetPlayerInputFlags"/>.</para>
+    /// <para>The signal is always called from a verified frame.</para>
+    /// </summary>
+    /// <param name="f">The frame reference.</param>
+    /// <param name="player">The player that connected.</param>
     void OnPlayerConnected(Frame f, PlayerRef player);
   }
 
+  /// <inheritdoc cref="OnPlayerDisconnected(Frame, PlayerRef)"/>
   public unsafe interface ISignalOnPlayerDisconnected : ISignal {
+    /// <summary>
+    /// The signal is called when a player has been removed and disconnected from the simulation.
+    /// <para>It's originating from the <see cref="Core.PlayerConnectedSystem"/>.</para>
+    /// <para>The connected status is based on the <see cref="DeterministicFrame.GetPlayerInputFlags"/>.</para>
+    /// <para>The signal is always called from a verified frame.</para>
+    /// </summary>    /// <param name="f">The frame reference.</param>
+    /// <param name="player">The disconnected player.</param>
     void OnPlayerDisconnected(Frame f, PlayerRef player);
   }
 
   partial class Frame {
+    /// <summary>
+    /// The Quantum signal API consist of core and user-defined code-generated signals.
+    /// </summary>
     public unsafe partial struct FrameSignals {
       Frame _f;
 
+      /// <summary>
+      /// Constructor. Only used internally.
+      /// </summary>
+      /// <param name="f">The frame reference.</param>
       public FrameSignals(Frame f) {
         _f = f;
       }
 
+      /// <inheritdoc cref="ISignalOnPlayerAdded.OnPlayerAdded(Frame, PlayerRef, bool)"/>
       public void OnPlayerAdded(PlayerRef player, bool firstTime) {
         {
           var array = _f._ISignalOnPlayerAdded;
@@ -1585,6 +1737,7 @@ namespace Quantum {
         }
       }
 
+      /// <inheritdoc cref="ISignalOnPlayerRemoved.OnPlayerRemoved(Frame, PlayerRef)"/>
       public void OnPlayerRemoved(PlayerRef player) {
         {
           var array = _f._ISignalOnPlayerRemoved;
@@ -1597,6 +1750,7 @@ namespace Quantum {
         }
       }
 
+      /// <inheritdoc cref="ISignalOnMapChanged.OnMapChanged(Frame, AssetRef{Map})"/>
       public void OnMapChanged(AssetRef<Map> previousMap) {
         var array = _f._ISignalOnMapChangedSystems;
         for (Int32 i = 0; i < array.Length; ++i) {
@@ -1607,6 +1761,7 @@ namespace Quantum {
         }
       }
 
+      /// <inheritdoc cref="ISignalOnEntityPrototypeMaterialized.OnEntityPrototypeMaterialized(Frame, EntityRef, EntityPrototypeRef)"/>
       public void OnEntityPrototypeMaterialized(EntityRef entity, EntityPrototypeRef prototypeRef) {
         var array = _f._ISignalOnEntityPrototypeMaterializedSystems;
         for (Int32 i = 0; i < array.Length; ++i) {
@@ -1617,6 +1772,7 @@ namespace Quantum {
         }
       }
 
+      /// <inheritdoc cref="ISignalOnPlayerConnected.OnPlayerConnected(Frame, PlayerRef)"/>
       public void OnPlayerConnected(PlayerRef player) {
         var array = _f._ISignalOnPlayerConnectedSystems;
         for (Int32 i = 0; i < array.Length; ++i) {
@@ -1627,6 +1783,7 @@ namespace Quantum {
         }
       }
 
+      /// <inheritdoc cref="ISignalOnPlayerDisconnected.OnPlayerDisconnected(Frame, PlayerRef)"/>
       public void OnPlayerDisconnected(PlayerRef player) {
         var array = _f._ISignalOnPlayerDisconnectedSystems;
         for (Int32 i = 0; i < array.Length; ++i) {
@@ -1637,6 +1794,7 @@ namespace Quantum {
         }
       }
 
+      /// <inheritdoc cref="ISignalOnNavMeshWaypointReached.OnNavMeshWaypointReached(Frame, EntityRef, FPVector3, Navigation.WaypointFlag, ref bool)"/>
       public void OnNavMeshWaypointReached(EntityRef entity, FPVector3 waypoint, Navigation.WaypointFlag waypointFlags, ref bool resetAgent) {
         var array   = _f._ISignalOnNavMeshWaypointReachedSystems;
         for (Int32 i = 0; i < array.Length; ++i) {
@@ -1647,6 +1805,7 @@ namespace Quantum {
         }
       }
 
+      /// <inheritdoc cref="ISignalOnNavMeshSearchFailed.OnNavMeshSearchFailed(Frame, EntityRef, ref bool)"/>
       public void OnNavMeshSearchFailed(EntityRef entity, ref bool resetAgent) {
         var array   = _f._ISignalOnNavMeshSearchFailedSystems;
         for (Int32 i = 0; i < array.Length; ++i) {
@@ -1657,6 +1816,7 @@ namespace Quantum {
         }
       }
 
+      /// <inheritdoc cref="ISignalOnNavMeshMoveAgent.OnNavMeshMoveAgent(Frame, EntityRef, FPVector2)"/>
       public void OnNavMeshMoveAgent(EntityRef entity, FPVector2 desiredDirection) {
         var array = _f._ISignalOnNavMeshMoveAgentSystems;
         for (Int32 i = 0; i < array.Length; ++i) {
@@ -1667,6 +1827,7 @@ namespace Quantum {
         }
       }
 
+      /// <inheritdoc cref="ISignalOnCollision2D.OnCollision2D(Frame, CollisionInfo2D)"/>
       public void OnCollision2D(CollisionInfo2D info) {
         var array   = _f._ISignalOnCollision2DSystems;
         for (Int32 i = 0; i < array.Length; ++i) {
@@ -1677,6 +1838,7 @@ namespace Quantum {
         }
       }
 
+      /// <inheritdoc cref="ISignalOnCollisionEnter2D.OnCollisionEnter2D(Frame, CollisionInfo2D)"/>
       public void OnCollisionEnter2D(CollisionInfo2D info) {
         var array   = _f._ISignalOnCollisionEnter2DSystems;
         for (Int32 i = 0; i < array.Length; ++i) {
@@ -1687,6 +1849,7 @@ namespace Quantum {
         }
       }
 
+      /// <inheritdoc cref="ISignalOnCollisionExit2D.OnCollisionExit2D(Frame, ExitInfo2D)"/>
       public void OnCollisionExit2D(ExitInfo2D info) {
         var array   = _f._ISignalOnCollisionExit2DSystems;
         for (Int32 i = 0; i < array.Length; ++i) {
@@ -1696,7 +1859,8 @@ namespace Quantum {
           }
         }
       }
-      
+
+      /// <inheritdoc cref="ISignalOnTrigger2D.OnTrigger2D(Frame, TriggerInfo2D)"/>
       public void OnTrigger2D(TriggerInfo2D info) {
         var array   = _f._ISignalOnTrigger2DSystems;
         for (Int32 i = 0; i < array.Length; ++i) {
@@ -1707,6 +1871,7 @@ namespace Quantum {
         }
       }
 
+      /// <inheritdoc cref="ISignalOnTriggerEnter2D.OnTriggerEnter2D(Frame, TriggerInfo2D)"/>
       public void OnTriggerEnter2D(TriggerInfo2D info) {
         var array   = _f._ISignalOnTriggerEnter2DSystems;
         for (Int32 i = 0; i < array.Length; ++i) {
@@ -1717,6 +1882,7 @@ namespace Quantum {
         }
       }
 
+      /// <inheritdoc cref="ISignalOnTriggerExit2D.OnTriggerExit2D(Frame, ExitInfo2D)"/>
       public void OnTriggerExit2D(ExitInfo2D info) {
         var array   = _f._ISignalOnTriggerExit2DSystems;
         for (Int32 i = 0; i < array.Length; ++i) {
@@ -1726,7 +1892,8 @@ namespace Quantum {
           }
         }
       }
-      
+
+      /// <inheritdoc cref="ISignalOnCollision3D.OnCollision3D(Frame, CollisionInfo3D)"/>
       public void OnCollision3D(CollisionInfo3D info) {
         var array   = _f._ISignalOnCollision3DSystems;
         for (Int32 i = 0; i < array.Length; ++i) {
@@ -1737,6 +1904,7 @@ namespace Quantum {
         }
       }
 
+      /// <inheritdoc cref="ISignalOnCollisionEnter3D.OnCollisionEnter3D(Frame, CollisionInfo3D)"/>
       public void OnCollisionEnter3D(CollisionInfo3D info) {
         var array   = _f._ISignalOnCollisionEnter3DSystems;
         for (Int32 i = 0; i < array.Length; ++i) {
@@ -1747,6 +1915,7 @@ namespace Quantum {
         }
       }
 
+      /// <inheritdoc cref="ISignalOnCollisionExit3D.OnCollisionExit3D(Frame, ExitInfo3D)"/>
       public void OnCollisionExit3D(ExitInfo3D info) {
         var array   = _f._ISignalOnCollisionExit3DSystems;
         for (Int32 i = 0; i < array.Length; ++i) {
@@ -1756,7 +1925,8 @@ namespace Quantum {
           }
         }
       }
-      
+
+      /// <inheritdoc cref="ISignalOnTrigger3D.OnTrigger3D(Frame, TriggerInfo3D)"/>
       public void OnTrigger3D(TriggerInfo3D info) {
         var array   = _f._ISignalOnTrigger3DSystems;
         for (Int32 i = 0; i < array.Length; ++i) {
@@ -1767,6 +1937,7 @@ namespace Quantum {
         }
       }
 
+      /// <inheritdoc cref="ISignalOnTriggerEnter3D.OnTriggerEnter3D(Frame, TriggerInfo3D)"/>
       public void OnTriggerEnter3D(TriggerInfo3D info) {
         var array   = _f._ISignalOnTriggerEnter3DSystems;
         for (Int32 i = 0; i < array.Length; ++i) {
@@ -1777,6 +1948,7 @@ namespace Quantum {
         }
       }
 
+      /// <inheritdoc cref="ISignalOnTriggerExit3D.OnTriggerExit3D(Frame, ExitInfo3D)"/>
       public void OnTriggerExit3D(ExitInfo3D info) {
         var array   = _f._ISignalOnTriggerExit3DSystems;
         for (Int32 i = 0; i < array.Length; ++i) {
@@ -1810,6 +1982,20 @@ namespace Quantum {
       var f = (Frame)frame;
       return f.Global;
     } 
+  }
+}
+
+#endregion
+
+
+#region Assets/Photon/Quantum/Simulation/Core/GameResult.cs
+
+namespace Quantum {
+  using System;
+
+  [Serializable]
+  public partial class GameResult : IGameResult {
+    public int Frame;
   }
 }
 
@@ -1867,6 +2053,36 @@ namespace Quantum {
 namespace Quantum {
   using System;
 
+  /// <inheritdoc cref="ISignalOnPlayerAdded.OnPlayerAdded(Frame, PlayerRef, bool)"/>
+  public interface ISignalOnPlayerAdded : ISignal {
+    /// <summary>
+    /// This signal is called when a player was successfully added to the simulation 
+    /// and the server accepted the RuntimePlayer data. 
+    /// </summary>
+    /// <para>The signal is always called from a verified frame.</para>
+    /// <param name="f">The frame reference.</param>
+    /// <param name="player">The player that was added.</param>
+    /// <param name="firstTime">The first time that this player ref was assigned to a player at all. When firstTime is false the player ref is being reused by a different player. See documentation.</param>
+    void OnPlayerAdded(Frame f, PlayerRef player, bool firstTime);
+  }
+
+  /// <inheritdoc cref="ISignalOnPlayerRemoved.OnPlayerRemoved(Frame, PlayerRef)"/>/>
+  public interface ISignalOnPlayerRemoved : ISignal {
+    /// <summary>
+    /// This signal is called when a player was removed from the simulation after
+    /// the InputFlags are set to <see cref="Photon.Deterministic.DeterministicInputFlags.PlayerNotPresent"/>.
+    /// </summary>
+    /// <para>The signal is always called from a verified frame.</para>
+    /// <param name="f">The frame reference.</param>
+    /// <param name="player">The player that was removed.</param>
+    void OnPlayerRemoved(Frame f, PlayerRef player);
+  }
+
+  #region Legacy
+
+  /// <summary>
+  /// Obsolete: use <see cref="ISignalOnPlayerAdded"/>.
+  /// </summary>
   [Obsolete("Use new interface ISignalOnPlayerAdded and change signature to OnPlayerAdded(Frame f, PlayerRef player, bool firstTime)")]
   public interface ISignalOnPlayerDataSet : ISignal {
     /// <summary>
@@ -1877,24 +2093,7 @@ namespace Quantum {
     void OnPlayerDataSet(Frame f, PlayerRef player);
   }
 
-  public interface ISignalOnPlayerAdded : ISignal {
-    /// <summary>
-    /// Is called when a player and his RuntimePlayer was added to the simulation.
-    /// </summary>
-    /// <param name="f">Frame</param>
-    /// <param name="player">Player</param>
-    /// <param name="firstTime">The first time that this player ref was assigned to a player at all. When firstTime is false the player ref is being reused by a different player. See documentation.</param>
-    void OnPlayerAdded(Frame f, PlayerRef player, bool firstTime);
-  }
-
-  public interface ISignalOnPlayerRemoved : ISignal {
-    /// <summary>
-    /// Is called when a player was removed from the simulation.
-    /// </summary>
-    /// <param name="f">Frame</param>
-    /// <param name="player">Player</param>
-    void OnPlayerRemoved(Frame f, PlayerRef player);
-  }
+  #endregion
 }
 
 #endregion
@@ -1905,13 +2104,14 @@ namespace Quantum {
 namespace Quantum {
   using Photon.Deterministic;
 
-  /// <summary>
-  /// Signal is fired when an agent reaches a waypoint.
-  /// </summary>
-  /// <remarks>Requires enabled <see cref="Navigation.Config.EnableNavigationCallbacks"/> in <see cref="SimulationConfig.Navigation"/>.</remarks>
+  /// <inheritdoc cref="OnNavMeshWaypointReached(Frame, EntityRef, Photon.Deterministic.FPVector3, Navigation.WaypointFlag, ref bool)"/>
   /// \ingroup NavigationApi
   public unsafe interface ISignalOnNavMeshWaypointReached : ISignal {
-    /// <param name="f">Current frame object</param>
+    /// <summary>
+    /// Signal is called when an agent reaches a waypoint.
+    /// <para>Requires enabled <see cref="Navigation.Config.EnableNavigationCallbacks"/> in <see cref="SimulationConfig.Navigation"/>.</para>
+    /// </summary>
+    /// <param name="f">The frame reference.</param>
     /// <param name="entity">The entity the navmesh agent component belongs to</param>
     /// <param name="waypoint">The current waypoint position</param>
     /// <param name="waypointFlags">The current waypoint flags</param>
@@ -1919,24 +2119,31 @@ namespace Quantum {
     void OnNavMeshWaypointReached(Frame f, EntityRef entity, FPVector3 waypoint, Navigation.WaypointFlag waypointFlags, ref bool resetAgent);
   }
 
-  /// <summary>
-  /// Signal is fired when the agent could not find a path in the agent update after using <see cref="NavMeshPathfinder.SetTarget"/>
-  /// </summary>
-  /// <remarks>Requires enabled <see cref="Navigation.Config.EnableNavigationCallbacks"/> in <see cref="SimulationConfig.Navigation"/>.</remarks>
+  /// <inheritdoc cref="OnNavMeshSearchFailed(Frame, EntityRef, ref bool)"/>
   /// \ingroup NavigationApi
   public unsafe interface ISignalOnNavMeshSearchFailed: ISignal {
-    /// <param name="f">Current frame object</param>
+    /// <summary>
+    /// Signal is called when the agent could not find a path in the agent update after using <see cref="NavMeshPathfinder.SetTarget"/>
+    /// <para>Requires enabled <see cref="Navigation.Config.EnableNavigationCallbacks"/> in <see cref="SimulationConfig.Navigation"/>.</para>
+    /// </summary>
+    /// <param name="f">The frame reference.</param>
     /// <param name="entity">The entity the navmesh agent component belongs to</param>
     /// <param name="resetAgent">Set this to true if the agent should reset its internal state (default is true).</param>
     void OnNavMeshSearchFailed(Frame f, EntityRef entity, ref bool resetAgent);
   }
 
-  /// <summary>
-  /// Signal is called when the agent should move. The desired direction is influence by avoidance.
-  /// </summary>
-  /// <remarks>The agent velocity should be set in the callback.</remarks>
+  /// <inheritdoc cref="OnNavMeshMoveAgent(Frame, EntityRef, FPVector2)"/>
   /// \ingroup NavigationApi
   public unsafe interface ISignalOnNavMeshMoveAgent: ISignal {
+    /// <summary>
+    /// Signal is called when the agent should move. The desired direction is influence by avoidance.
+    /// <para>The agent velocity should be set in the callback.</para>
+    /// <para>Requires enabled <see cref="NavMeshAgentConfig.MovementType"/> to be set to Callback.</para>
+    /// <para>Requires enabled <see cref="Navigation.Config.EnableNavigationCallbacks"/> in <see cref="SimulationConfig.Navigation"/>.</para>
+    /// </summary>
+    /// <param name="f">The frame reference.</param>
+    /// <param name="entity">The entity the navmesh agent component belongs to.</param>
+    /// <param name="desiredDirection">The normalized direction that the internal steering and avoidance thinks the agent movement vector should be.</param>
     void OnNavMeshMoveAgent(Frame f, EntityRef entity, FPVector2 desiredDirection);
   }
 }
@@ -2037,11 +2244,11 @@ namespace Quantum {
   [Serializable]
   public partial class RuntimePlayer : IRuntimePlayer {
     /// <summary>
-    /// This is a proposal how to let players select an avatar prototype using RuntimePlayer. Can be removed.
+    /// Optionally let players select an avatar prototype using RuntimePlayer. This field can be removed from RuntimePlayer if not needed.
     /// </summary>
     public Quantum.AssetRef<Quantum.EntityPrototype> PlayerAvatar;
     /// <summary>
-    /// This is a proposal how to assign a nickname to players using RuntimePlayer. Can be removed.
+    /// Optionally assign a nickname to players using RuntimePlayer. This field can be removed from RuntimePlayer if not needed.
     /// </summary>
     public string PlayerNickname;
 
@@ -2119,12 +2326,13 @@ namespace Quantum {
 #region Assets/Photon/Quantum/Simulation/Core/SystemSetup.cs
 
 namespace Quantum {
+  using System;
   using System.Collections.Generic;
   using System.Linq;
   using System.Reflection;
 
   /// <summary>
-  /// Responsible for instantiating Quantum systems on simualtion start.
+  /// Responsible for instantiating Quantum systems on simualation start.
   /// User systems can be added by adding a <see cref="SystemsConfig"/> to the <see cref="RuntimeConfig"/>.
   /// Or adding them in the user callback <see cref="AddSystemsUser"/>.
   /// </summary>
@@ -2168,7 +2376,7 @@ namespace Quantum {
 
     private static ICollection<SystemBase> CallLegacySystemSetup(RuntimeConfig gameConfig, SimulationConfig simulationConfig) {
       // public static SystemBase[] CreateSystems(RuntimeConfig gameConfig, SimulationConfig simulationConfig) {
-      var systemSetupType = TypeUtils.FindType("SystemSetup");
+      var systemSetupType = FindStaticType("SystemSetup");
       if (systemSetupType == null) {
         return null;
       }
@@ -2185,6 +2393,71 @@ namespace Quantum {
 
       return systemArray.ToList();
     }
+    
+    private static Type FindStaticType(string name) {
+      foreach (var assembly in AppDomain.CurrentDomain.GetAssemblies()) {
+        Type[] types;
+        try {
+          types = assembly.GetTypes();
+        } catch (ReflectionTypeLoadException ex) {
+          types = ex.Types;
+        }
+        
+        foreach (var t in types) {
+          if (t == null) {
+            continue;
+          }
+          if (!(t.IsClass && t.IsAbstract && t.IsSealed)) {
+            continue;
+          }
+          if (!string.Equals(t.Name, name, StringComparison.Ordinal)) {
+            continue;
+          }
+          return t;
+        }
+      }
+
+      return null;
+    }
+  }
+}
+
+
+#endregion
+
+
+#region Assets/Photon/Quantum/Simulation/Events/EventGameResult.cs
+
+namespace Quantum {
+  using System;
+
+  /// <summary>
+  /// Does not have to implement checksum, because it's a hard-coded synced event.
+  /// </summary>
+  public sealed class EventGameResult : EventBase {
+    /// <summary>
+    /// The game result event id.
+    /// </summary>
+    public const Int32 ID = 0;
+
+    /// <summary>
+    /// The game result that was created by the simulation.
+    /// </summary>
+    public GameResult GameResult;
+
+    /// <summary>
+    /// Constructor.
+    /// </summary>
+    public EventGameResult() : base(ID, EventFlags.Server | EventFlags.Client | EventFlags.Synced) {
+    }
+
+    /// <summary>
+    /// Override the Game accessor to return the specialized <see cref="QuantumGame"/> instead of the interface.
+    /// </summary>
+    public new QuantumGame Game {
+      get => (QuantumGame)base.Game;
+      set => base.Game = value;
+    }
   }
 }
 
@@ -2198,8 +2471,15 @@ namespace Quantum {
   using System;
   using System.Collections.Generic;
 
+  /// <summary>
+  /// A subscribe and publish pattern for Quantum callbacks.
+  /// A Quantum callback is a invocation from inside the simulation during certain situations.
+  /// </summary>
   public class CallbackDispatcher : DispatcherBase, Quantum.ICallbackDispatcher {
-
+    /// <summary>
+    /// Assembles a dictionary of built-in Quantum callback types.
+    /// </summary>
+    /// <returns>Callback mapping</returns>
     protected static Dictionary<Type, Int32> GetBuiltInTypes() {
       return new Dictionary<Type, Int32>() {
         { typeof(CallbackChecksumComputed), CallbackChecksumComputed.ID },
@@ -2223,9 +2503,20 @@ namespace Quantum {
       };
     }
 
+    /// <summary>
+    /// Constructor calls <see cref="GetBuiltInTypes"/>.
+    /// </summary>
     public CallbackDispatcher() : base(GetBuiltInTypes()) { }
+    /// <summary>
+    /// Constructor to add the callback type mapping manually.
+    /// </summary>
+    /// <param name="callbackTypes"></param>
     protected CallbackDispatcher(Dictionary<Type, Int32> callbackTypes) : base(callbackTypes) { }
-
+    /// <summary>
+    /// Publish a callback.
+    /// </summary>
+    /// <param name="e"></param>
+    /// <returns>True if the callback has been handled by any subscriber</returns>
     public bool Publish(CallbackBase e) {
       return base.InvokeMeta(e.ID, e);
     }
@@ -2241,15 +2532,42 @@ namespace Quantum {
 namespace Quantum {
   using System.Collections.Generic;
   using System.IO;
-  using System.Linq;
   using Photon.Deterministic;
 
+  /// <summary>
+  /// Gathers additional meta data during the Quantum game callback <see cref="IDeterministicGame.GetExtraErrorFrameDumpData"/>
+  /// in response to a checksum error.
+  /// </summary>
   public unsafe partial class ChecksumErrorFrameDumpContext {
+    /// <summary>
+    /// The simulation config.
+    /// </summary>
     public SimulationConfig SimulationConfig;
+    /// <summary>
+    /// AssetDB checksums.
+    /// </summary>
     public QTuple<AssetGuid, ulong>[] AssetDBChecksums;
+
+    /// <summary>
+    /// Inject custom code into the constructor.
+    /// </summary>
+    partial void ConstructUser(QuantumGame game, Frame frame);
+    /// <summary>
+    /// Inject custom code into the serialize method to add more meta data.
+    /// </summary>
+    partial void SerializeUser(QuantumGame game, BinaryWriter writer);
+    /// <summary>
+    /// Inject custom code into the deserialization to add more data to show during desyncs.
+    /// </summary>
+    partial void DeserializeUser(QuantumGame game, BinaryReader reader);
 
     private ChecksumErrorFrameDumpContext() {}
 
+    /// <summary>
+    /// Constructor.
+    /// </summary>
+    /// <param name="game">Game</param>
+    /// <param name="frame">Frame</param>
     public ChecksumErrorFrameDumpContext(QuantumGame game, Frame frame) {
       var options = game.Configurations.Simulation.ChecksumErrorDumpOptions;
 
@@ -2257,8 +2575,8 @@ namespace Quantum {
 
       // write checksums
       if ((options & SimulationConfigChecksumErrorDumpOptions.SendAssetDBChecksums) == SimulationConfigChecksumErrorDumpOptions.SendAssetDBChecksums) {
-
-        List<AssetObject> assets = frame.Context.AssetDB.ResourceManager.LoadAllAssets();
+        
+        List<AssetObject> assets = frame.Context.ResourceManager.LoadAllAssets();
         assets.Sort((a, b) => a.Guid.CompareTo(b.Guid));
         
         AssetDBChecksums = new QTuple<AssetGuid, ulong>[assets.Count];
@@ -2275,10 +2593,11 @@ namespace Quantum {
       ConstructUser(game, frame);
     }
 
-    partial void ConstructUser(QuantumGame game, Frame frame);
-    partial void SerializeUser(QuantumGame game, BinaryWriter writer);
-    partial void DeserializeUser(QuantumGame game, BinaryReader reader);
-
+    /// <summary>
+    /// Serialize the additional meta data.
+    /// </summary>
+    /// <param name="game">Game</param>
+    /// <param name="writer">Writer object</param>
     public void Serialize(QuantumGame game, BinaryWriter writer) {
       writer.Write(AssetDBChecksums?.Length ?? 0);
       if (AssetDBChecksums != null) {
@@ -2300,6 +2619,12 @@ namespace Quantum {
       SerializeUser(game, writer);
     }
 
+    /// <summary>
+    /// Deserialize the additional meta data.
+    /// </summary>
+    /// <param name="game">Game</param>
+    /// <param name="reader">Reader object</param>
+    /// <returns></returns>
     public static ChecksumErrorFrameDumpContext Deserialize(QuantumGame game, BinaryReader reader) {
       var result = new ChecksumErrorFrameDumpContext();
 
@@ -2343,8 +2668,15 @@ namespace Quantum {
   using System;
   using System.Collections.Generic;
 
+  /// <summary>
+  /// Publish, subscribe pattern for Quantum events: <see cref="EventBase"/>.
+  /// Quantum events are used to communicate view relevant game updates from the simulation to the view.
+  /// </summary>
   public class EventDispatcher : DispatcherBase, IEventDispatcher {
-
+    /// <summary>
+    /// Assembles a dictionary of built-in and user generated Quantum event types.
+    /// </summary>
+    /// <returns>Event mapping</returns>
     private static Dictionary<Type, Int32> GetEventTypes() {
       var result = new Dictionary<Type, Int32> {
         { typeof(EventBase), 0 }
@@ -2357,8 +2689,16 @@ namespace Quantum {
       return result;
     }
 
+    /// <summary>
+    /// Creates the event dispatcher and initializes the event type mapping.
+    /// </summary>
     public EventDispatcher() : base(GetEventTypes()) { }
 
+    /// <summary>
+    /// Publish an event.
+    /// </summary>
+    /// <param name="e">Event</param>
+    /// <returns>True if the event was handled by any subscription</returns>
     public unsafe bool Publish(EventBase e) {
 
       int eventDepth = 0;
@@ -2410,50 +2750,92 @@ namespace Quantum {
 
   /// <summary>
   /// QuantumGame acts as an interface to the simulation from the client code's perspective.
+  /// <para>Access and method to this class is always safe from the clients point of view.</para>
   /// </summary>
-  /// Access and method to this class is always safe from the clients point of view.
   public unsafe partial class QuantumGame : IDeterministicGame {
+    /// <summary>
+    /// A callback that is invoked after the <see cref="IDeterministicGame.OnSimulate"/> callback.
+    /// It uses the <see cref="FrameContext.ProfilerContext"/> to create a report.
+    /// </summary>
     public event Action<ProfilerContextData> ProfilerSampleGenerated;
 
     /// <summary>
     /// Stores the different frames the simulation uses during one tick.
     /// </summary>
     public class FramesContainer {
+      /// <summary>
+      /// Quick accessor to the forward-only verified data (simulated with confirmed inputs from server in online games). 
+      /// Can be used as source of truth, as this does not include predicted data.
+      /// </summary>
       public Frame Verified;
+      /// <summary>
+      /// Quick accessor to the latest locally predicted copy of the game state.
+      /// </summary>
       public Frame Predicted;
+      /// <summary>
+      /// Quick accessor to the second latest locally predicted copy of the game state.
+      /// Used for accurate visual interpolation of transforms (or any other data) between this and the Predicted frame.
+      /// </summary>
       public Frame PredictedPrevious;
+      /// <summary>
+      /// Quick accessor to the latest simulated copy of the Frame that was last-Predicted during the previous main session update. 
+      /// Used to calculate transform view error for smoothed correction.
+      /// </summary>
       public Frame PreviousUpdatePredicted;
     }
 
-    // Caveat: Only set after the first CreateFrame() call
+    /// <summary>
+    /// Stores runtime config and simulation config for this session.
+    /// </summary>
     public class ConfigurationsContainer {
+      /// <summary>
+      /// Runtime config finally used by the (online) simulation.
+      /// </summary>
       public RuntimeConfig Runtime;
+      /// <summary>
+      /// Access to the simulation config used by the (online) simulation.
+      /// </summary>
       public SimulationConfig Simulation;
     }
 
-    /// <summary> Access the frames of various times available during one tick. </summary>
+    /// <summary> 
+    /// Access the frames of various times available during one tick. 
+    /// </summary>
     public FramesContainer Frames { get; }
-
-    /// <summary> Access the configurations that the simulation is running with. </summary>
+    /// <summary>
+    /// Access the configurations that the simulation is running with.
+    /// Only set after the first CreateFrame() call.
+    /// </summary>
     public ConfigurationsContainer Configurations { get; }
-
-    /// <summary> Access the Deterministic session object to query more internals. </summary>
+    /// <summary> 
+    /// Access the Deterministic session object to query more internals. 
+    /// </summary>
     public DeterministicSession Session { get; private set; }
-
-    /// <summary> Used for position interpolation on the client for smoother interpolation results. </summary>
+    /// <summary> 
+    /// Used for position interpolation on the client for smoother interpolation results.
+    /// </summary>
     public Single InterpolationFactor { get; private set; }
-
-    /// <summary> </summary>
+    /// <summary>
+    /// Instant replay configuration, initialized by <see cref="QuantumGameStartParameters.InstantReplaySettings"/>."
+    /// </summary>
     public InstantReplaySettings InstantReplayConfig { get; private set; }
-
-    /// <summary> </summary>
+    /// <summary>
+    /// Asset serializer passed by <see cref="QuantumGameStartParameters.AssetSerializer"/>.
+    /// </summary>
     public IAssetSerializer AssetSerializer { get; }
-
+    /// <summary>
+    /// Resource manager passed by <see cref="QuantumGameStartParameters.ResourceManager"/>.
+    /// </summary>
     public IResourceManager ResourceManager { get => _resourceManager; }
-
-    /// <summary> Extra heaps to allocate for a session in case you need to create 'auxiliary' frames than actually required for the simulation itself. </summary>
+    /// <summary> 
+    /// Extra heaps to allocate for a session in case you need to create 'auxiliary' frames than actually required for the simulation itself. 
+    /// </summary>
     public int HeapExtraCount { get; }
-
+    /// <summary>
+    /// Game flags passer by <see cref="QuantumGameStartParameters.GameFlags"/>.
+    /// See <see cref="QuantumGameFlags"/>.
+    /// </summary>
+    public int GameFlags => _flags;
 
     Byte[] _inputStreamReadZeroArray;
     IResourceManager _resourceManager;
@@ -2473,25 +2855,29 @@ namespace Quantum {
     int _flags;
     bool _gameStartedCalled;
 
+    /// <summary>
+    /// Create a Quantum game instance.
+    /// </summary>
+    /// <param name="startParams">Start parameters.</param>
     public QuantumGame(in QuantumGameStartParameters startParams) {
-      _typeRegistry  = new TypeRegistry();
+      _typeRegistry = new TypeRegistry();
       Statics.RegisterSimulationTypes(_typeRegistry);
-      
-      Frames         = new FramesContainer();
+
+      Frames = new FramesContainer();
       Configurations = new ConfigurationsContainer();
 
-      _resourceManager      = startParams.ResourceManager;
-      AssetSerializer       = startParams.AssetSerializer;
-      _callbackDispatcher   = startParams.CallbackDispatcher;
-      _eventDispatcher      = startParams.EventDispatcher;
-      InstantReplayConfig   = startParams.InstantReplaySettings;
-      HeapExtraCount        = startParams.HeapExtraCount;
-      _flags                = startParams.GameFlags;
-      _gameStartedCalled    = false;
+      _resourceManager = startParams.ResourceManager;
+      AssetSerializer = startParams.AssetSerializer;
+      _callbackDispatcher = startParams.CallbackDispatcher;
+      _eventDispatcher = startParams.EventDispatcher;
+      InstantReplayConfig = startParams.InstantReplaySettings;
+      HeapExtraCount = startParams.HeapExtraCount;
+      _flags = startParams.GameFlags;
+      _gameStartedCalled = false;
 
       if (startParams.InitialDynamicAssets != null) {
-        _initialDynamicAssets = new DynamicAssetDB();
-        _initialDynamicAssets.CopyFrom(startParams.InitialDynamicAssets);
+        // copy the db; hold on to it until the frame context takes ownership of it
+        _initialDynamicAssets = new DynamicAssetDB(startParams.InitialDynamicAssets);
       }
 
       InitCallbacks();
@@ -2596,30 +2982,48 @@ namespace Quantum {
     }
 
     /// <summary>
-    /// <see cref="QuantumGameFlags"/>
+    /// The game is destroyed. This is called from inside the <see cref="DeterministicSession"/>.
     /// </summary>
-    public int GameFlags => _flags;
-
     public void OnDestroy() {
       SnapshotsOnDestroy();
       InvokeOnDestroy();
       CheckTrackedHeapAllocations();
     }
 
+    /// <summary>
+    /// Create a new frame object using the internal frame context.
+    /// </summary>
+    /// <returns>Frame</returns>
     public Frame CreateFrame() {
       return (Frame)((IDeterministicGame)this).CreateFrame(_context);
     }
 
+    /// <summary>
+    /// Create a new frame object using an external context.
+    /// </summary>
+    /// <param name="context"></param>
+    /// <returns>Frame</returns>
     DeterministicFrame IDeterministicGame.CreateFrame(IDisposable context) {
       return new Frame((FrameContextUser)context, _systemsAll, _systemsRoot, Session.SessionConfig, Configurations.Runtime, Configurations.Simulation, Session.DeltaTime);
     }
-
+    
+    /// <summary>
+    /// Create a new frame object using an external context and external frame data.
+    /// </summary>
+    /// <param name="context">Frame context</param>
+    /// <param name="data">Serialized frame data</param>
+    /// <returns>Frame</returns>
     DeterministicFrame IDeterministicGame.CreateFrame(IDisposable context, Byte[] data) {
       Frame f = CreateFrame();
       f.Deserialize(data);
       return f;
     }
 
+    /// <summary>
+    /// Tries to get the verified frame for a given tick from the snapshot buffer.
+    /// </summary>
+    /// <param name="tick">Tick</param>
+    /// <returns>Verified frame based on the requested tick or null.</returns>
     public DeterministicFrame GetVerifiedFrame(int tick) {
       if (_checksumSnapshotBuffer != null) {
         var result = _checksumSnapshotBuffer.Find(tick, DeterministicFrameSnapshotBufferFindMode.Equal);
@@ -2631,13 +3035,15 @@ namespace Quantum {
       return null;
     }
 
+    /// <summary>
+    /// Create the frame context.
+    /// </summary>
+    /// <returns>Frame context</returns>
+    /// <exception cref="ArgumentException">Is raised when no <see cref="SimulationConfig"/> is set inside the <see cref="RuntimeConfig"/>.</exception>
     public IDisposable CreateFrameContext() {
       if (_context == null) {
         Assert.Check(_systemsAll == null);
         Assert.Check(_systemsRoot == null);
-
-        // create asset database
-        var assetDB = new AssetDB(_resourceManager);
 
         // de-serialize runtime config, session is the one from the server
         Configurations.Runtime = AssetSerializer.ConfigFromByteArray<RuntimeConfig>(Session.RuntimeConfig, compressed: true);
@@ -2647,13 +3053,13 @@ namespace Quantum {
         if (simulationConfig.Id.IsValid == false) {
           throw new ArgumentException("No SimulationConfig set. Register one with the RuntimeConfig that the simulation is started with.");
         }
-        Configurations.Simulation = (SimulationConfig)assetDB.FindAsset(simulationConfig.Id);
+        Configurations.Simulation = (SimulationConfig)_resourceManager.GetAsset(simulationConfig.Id);
         Assert.Always(Configurations.Simulation != null, "RuntimeConfig.SimulationConfig with asset id {0} was not found", simulationConfig.Id);
 
         // register commands
         Session.CommandSerializer.RegisterFactories(DeterministicCommandSetup.GetCommandFactories(Configurations.Runtime, Configurations.Simulation));
 
-        var systemsConfig = (SystemsConfig)assetDB.FindAsset(Configurations.Runtime.SystemsConfig.Id);
+        var systemsConfig = (SystemsConfig)_resourceManager.GetAsset(Configurations.Runtime.SystemsConfig.Id);
 
         // initialize systems
         _systemsRoot = DeterministicSystemSetup.CreateSystems(Configurations.Runtime, Configurations.Simulation, systemsConfig).Where(x => x != null).ToArray();
@@ -2667,12 +3073,12 @@ namespace Quantum {
           heapCount++;
         }
 
-        // additional frame (Previous) in interpolatable sessions
+        // additional frame (Previous) in interpolate-able sessions
         if (Session.IsInterpolatable) {
           heapCount++;
         }
 
-        // additional frame (Previous Update Predicted) if the session is both predicted and interpolatable
+        // additional frame (Previous Update Predicted) if the session is both predicted and interpolate-able
         if (Session.IsPredicted && Session.IsInterpolatable) {
           heapCount++;
         }
@@ -2692,32 +3098,35 @@ namespace Quantum {
         Session.PlatformInfo.CoreCount = Configurations.Simulation.ThreadCount;
 
         FrameContext.Args args;
-        args.AssetDatabase               = assetDB;
-        args.PlatformInfo                = Session.PlatformInfo;
-        args.IsServer                    = (_flags & QuantumGameFlags.Server) == QuantumGameFlags.Server;
-        args.IsLocalPlayer               = Session.IsLocalPlayer;
-        args.HeapConfig                  = new Heap.Config(Configurations.Simulation.HeapPageShift, Configurations.Simulation.HeapPageCount, heapCount);
+        args.PlatformInfo = Session.PlatformInfo;
+        args.IsServer = (_flags & QuantumGameFlags.Server) == QuantumGameFlags.Server;
+        args.IsLocalPlayer = Session.IsLocalPlayer;
+        args.HeapConfig = new Heap.Config(Configurations.Simulation.HeapPageShift, Configurations.Simulation.HeapPageCount, heapCount);
 #if DEBUG  
-        args.HeapTrackingMode            = Configurations.Simulation.HeapTrackingMode;
+        args.HeapTrackingMode = Configurations.Simulation.HeapTrackingMode;
 #else
         args.HeapTrackingMode            = HeapTrackingMode.Disabled;
 #endif
-        args.PhysicsConfig               = Configurations.Simulation.Physics;
-        args.NavigationConfig            = Configurations.Simulation.Navigation;
-        args.CommandSerializer           = Session.CommandSerializer;
-        args.AssetSerializer             = AssetSerializer;
-        args.InitialDynamicAssets        = _initialDynamicAssets;
+        args.PhysicsConfig = Configurations.Simulation.Physics;
+        args.NavigationConfig = Configurations.Simulation.Navigation;
+        args.CommandSerializer = Session.CommandSerializer;
+        args.AssetSerializer = AssetSerializer;
+        args.ResourceManager = _resourceManager;
+        args.InitialDynamicAssets = _initialDynamicAssets;
         args.UseSharedChecksumSerialized = (_flags & QuantumGameFlags.DisableSharedChecksumSerializer) != QuantumGameFlags.DisableSharedChecksumSerializer;
-        args.IsTaskProfilerEnabled       = (_flags & QuantumGameFlags.EnableTaskProfiler) == QuantumGameFlags.EnableTaskProfiler;
+        args.IsTaskProfilerEnabled = (_flags & QuantumGameFlags.EnableTaskProfiler) == QuantumGameFlags.EnableTaskProfiler;
 
         // toggle various parts of the context code
-        args.UsePhysics2D   = _systemsAll.FirstOrDefault(x => x is PhysicsSystem2D) != null;
-        args.UsePhysics3D   = _systemsAll.FirstOrDefault(x => x is PhysicsSystem3D) != null;
-        args.UseNavigation  = _systemsAll.FirstOrDefault(x => x is NavigationSystem) != null;
+        args.UsePhysics2D = _systemsAll.FirstOrDefault(x => x is PhysicsSystem2D) != null;
+        args.UsePhysics3D = _systemsAll.FirstOrDefault(x => x is PhysicsSystem3D) != null;
+        args.UseNavigation = _systemsAll.FirstOrDefault(x => x is NavigationSystem) != null;
         args.UseCullingArea = _systemsAll.FirstOrDefault(x => x is CullingSystem2D) != null || _systemsAll.FirstOrDefault(x => x is CullingSystem3D) != null;
 
         // create frame context
         _context = new FrameContextUser(args);
+        
+        // at this point, the ownership over the initial dynamic db is gone to the frame context
+        _initialDynamicAssets = null;
       }
 
       return _context;
@@ -2728,7 +3137,6 @@ namespace Quantum {
     /// </summary>
     /// <param name="position">Center of the prediction area</param>
     /// <param name="radius">Radius of the prediction area</param>
-    /// <para>The Prediction Culling feature must be explicitly enabled in <see cref="SimulationConfig.UsePredictionArea"/>.</para>
     /// <para>This can be safely called from the main-thread.</para>
     /// <para>Prediction Culling allows developers to save CPU time in games where the player has only a partial view of the game scene.
     /// Quantum prediction and rollbacks, which are time consuming, will only run for important entities that are visible to the local player(s). Leaving anything outside that area to be simulated only once per tick with no rollbacks as soon as the inputs are confirmed from server.
@@ -2746,10 +3154,17 @@ namespace Quantum {
       _context.SetPredictionArea(position.XOY, radius);
     }
 
+    /// <summary>
+    /// Not implemented.
+    /// </summary>
     public void OnGameEnded() {
       InvokeOnGameEnded();
     }
 
+    /// <summary>
+    /// The callback is called when the actual simulation starts after the online protocol start sequence was successful.
+    /// </summary>
+    /// <param name="f">First frame</param>
     public void OnGameStart(DeterministicFrame f) {
       // init event invoker
       InitEventInvoker(Session.RollbackWindow);
@@ -2775,6 +3190,9 @@ namespace Quantum {
       InvokeEvents();
     }
 
+    /// <summary>
+    /// The callback is called when the game is starting from a snapshot after the snapshot has been received.
+    /// </summary>
     public void OnGameResync() {
       _checksumSnapshotBuffer?.Clear();
       ReplayToolsOnGameResync();
@@ -2798,6 +3216,12 @@ namespace Quantum {
       }
     }
 
+    /// <summary>
+    /// The callback is called to poll local input.
+    /// </summary>
+    /// <param name="frame">Frame</param>
+    /// <param name="playerSlot">Player slot</param>
+    /// <returns>Polled input for this frame</returns>
     public DeterministicFrameInputTemp OnLocalInput(Int32 frame, Int32 playerSlot) {
       var input = default(QTuple<Input, DeterministicInputFlags>);
 
@@ -2826,6 +3250,11 @@ namespace Quantum {
       return DeterministicFrameInputTemp.Predicted(frame, playerSlot, _inputSerializerWrite.Stream.Data, _inputSerializerWrite.Stream.BytesRequired, input.Item1);
     }
 
+    /// <summary>
+    /// The callback is called to serialize the game-specific input.
+    /// </summary>
+    /// <param name="encoded">The source input</param>
+    /// <param name="result">The destination input</param>
     public void OnSerializedInput(byte* encoded, Array result) {
       _inputSerializerWrite.Reset();
       _inputSerializerWrite.Writing = true;
@@ -2837,6 +3266,10 @@ namespace Quantum {
       Buffer.BlockCopy(_inputSerializerWrite.Stream.Data, 0, result, 0, _inputSerializerWrite.Stream.BytesRequired);
     }
 
+    /// <summary>
+    /// The callback is called when any simulation step was executed.
+    /// </summary>
+    /// <param name="state">Frame that was simulated</param>
     public void OnSimulate(DeterministicFrame state) {
       HostProfiler.Start("QuantumGame.OnSimulate");
 
@@ -2868,7 +3301,7 @@ namespace Quantum {
 
         profiler.Start("Scheduling Tasks #ff9900");
         HostProfiler.Start("Scheduling Tasks");
-        
+
         for (Int32 i = 0; i < _systemsRoot.Length; ++i) {
           if (f.SystemIsEnabledSelf(_systemsRoot[i])) {
             try {
@@ -2906,11 +3339,18 @@ namespace Quantum {
       HostProfiler.End();
     }
 
+    /// <summary>
+    /// The callback is called after any simulation step was executed and after the <see cref="OnSimulate(DeterministicFrame)"/> callback.
+    /// </summary>
+    /// <param name="state">Frame that was simulated</param>
     public void OnSimulateFinished(DeterministicFrame state) {
       SnapshotsOnSimulateFinished(state);
       InvokeOnSimulateFinished(state);
     }
 
+    /// <summary>
+    /// The callback is called when when the session completed its <see cref="DeterministicSession.Update"/> loop.
+    /// </summary>
     public void OnUpdateDone() {
       Frames.Predicted = (Frame)Session.FramePredicted;
       Frames.PredictedPrevious = (Frame)Session.FramePredictedPrevious;
@@ -2926,6 +3366,10 @@ namespace Quantum {
       InvokeEvents();
     }
 
+    /// <summary>
+    /// The <see cref="DeterministicSession"/> creates this reference during its initialization.
+    /// </summary>
+    /// <param name="session">Deterministic session that this game uses</param>
     public void AssignSession(DeterministicSession session) {
       Session = session;
 
@@ -2947,63 +3391,132 @@ namespace Quantum {
       }
     }
 
+    /// <summary>
+    /// The callback is called when a checksum error was detected.
+    /// </summary>
+    /// <param name="error">Checksum error information</param>
+    /// <param name="frames">Contains the verified frame that was failed to validate</param>
     public void OnChecksumError(DeterministicTickChecksumError error, DeterministicFrame[] frames) {
       InvokeOnChecksumError(error, frames);
     }
 
+    /// <summary>
+    /// The callback is called when the local checksum was computed.
+    /// </summary>
+    /// <param name="frame">The frame the checksum belongs to</param>
+    /// <param name="checksum">The checksum that will be send to the server</param>
     public void OnChecksumComputed(Int32 frame, ulong checksum) {
       InvokeOnChecksumComputed(frame, checksum);
       ReplayToolsOnChecksumComputed(frame, checksum);
     }
 
-    public void OnSimulationEnd() {
-      _context.OnSimulationEnd();
-    }
-
+    /// <summary>
+    /// The callback is called before the session computes multiple simulation steps (frames).
+    /// </summary>
     public void OnSimulationBegin() {
       _polledInputInThisSimulation = false;
       _context.OnSimulationBegin();
     }
 
+    /// <summary>
+    /// The callback is called when multiple simulation steps (frames) were executed.
+    /// </summary>
+    public void OnSimulationEnd() {
+      _context.OnSimulationEnd();
+    }
+
+    /// <summary>
+    /// The callback is called when an input object was confirmed by the server.
+    /// </summary>
+    /// <param name="input">Input object</param>
     public void OnInputConfirmed(DeterministicFrameInputTemp input) {
       InvokeOnInputConfirmed(input);
       ReplayToolsOnInputConfirmed(input);
     }
 
+    /// <summary>
+    /// The callback is called when an input set (all clients) was confirmed by the server.
+    /// </summary>
+    /// <param name="tick">Tick</param>
+    /// <param name="length">Length of input object array</param>
+    /// <param name="data">Input objects</param>
     public void OnInputSetConfirmed(int tick, int length, byte[] data) {
       ReplayToolsOnInputSetConfirmed(tick, length, data);
     }
 
+    /// <summary>
+    /// The callback is called when the clients receives a frame dump of another client from the server.
+    /// </summary>
+    /// <param name="actorId">The Photon actor id that the dump belongs to</param>
+    /// <param name="frameNumber">The frame number of the dump</param>
+    /// <param name="sessionConfig">The session config</param>
+    /// <param name="runtimeConfig">The runtime config</param>
+    /// <param name="frameData">The frame data</param>
+    /// <param name="extraData">Extra dump meta information</param>
     public void OnChecksumErrorFrameDump(int actorId, int frameNumber, DeterministicSessionConfig sessionConfig, byte[] runtimeConfig, byte[] frameData, byte[] extraData) {
       InvokeOnChecksumErrorFrameDump(actorId, frameNumber, sessionConfig, runtimeConfig, frameData, extraData, AssetSerializer);
     }
 
+    /// <summary>
+    /// The callback is called when the server plugin disconnected the client.
+    /// </summary>
+    /// <param name="reason">Debug string</param>
     public void OnPluginDisconnect(string reason) {
-      Log.Error("DISCONNECTED: " + reason);
+      Log.Error("Disconnected: " + reason);
       InvokeOnPluginDisconnect(reason);
     }
 
+    /// <summary>
+    /// The callback is called when the server confirmed the addition of a (local) player.
+    /// </summary>
+    /// <param name="frame">The frame the player has been added</param>
+    /// <param name="playerSlot">The player slot that was used to assign the player</param>
+    /// <param name="player">The player</param>
     public void OnLocalPlayerAddConfirmed(DeterministicFrame frame, int playerSlot, PlayerRef player) {
       Log.Debug($"Player Added Locally {player} at frame {frame.Number}");
       InvokeOnLocalPlayerAddConfirmed((Frame)frame, playerSlot, player);
     }
 
+    /// <summary>
+    /// The callback is called when the server confirmed the removal of a (local) player.
+    /// </summary>
+    /// <param name="frame">The frame when the request was confirmed</param>
+    /// <param name="playerSlot">The player slot of the removed player</param>
+    /// <param name="player">The player that was removed</param>
     public void OnLocalPlayerRemoveConfirmed(DeterministicFrame frame, int playerSlot, PlayerRef player) {
       InvokeOnLocalPlayerRemoveConfirmed((Frame)frame, playerSlot, player);
     }
 
+    /// <summary>
+    /// The callback is called when the server failed to process the add player request.
+    /// </summary>
+    /// <param name="playerSlot">The player slot that was requested</param>
+    /// <param name="message">Debug message</param>
     public void OnLocalPlayerAddFailed(int playerSlot, string message) {
       InvokeOnLocalPlayerAddFailed(playerSlot, message);
     }
 
+    /// <summary>
+    /// The callback is called when the server failed to process the remove player request.
+    /// </summary>
+    /// <param name="playerSlot">The player slot that was tried to remove</param>
+    /// <param name="message">Debug message</param>
     public void OnLocalPlayerRemoveFailed(int playerSlot, string message) {
       InvokeOnLocalPlayerRemoveFailed(playerSlot, message);
     }
 
+    /// <summary>
+    /// Return the in memory input size.
+    /// </summary>
+    /// <returns>Input object size</returns>
     public int GetInputInMemorySize() {
       return sizeof(Input);
     }
 
+    /// <summary>
+    /// Returns the serialized input size.
+    /// </summary>
+    /// <returns>Serialized input size</returns>
     public Int32 GetInputSerializedFixedSize() {
       var stream = new FrameSerializer(DeterministicFrameSerializeMode.Serialize, null, 1024);
       stream.Writing = true;
@@ -3039,7 +3552,7 @@ namespace Quantum {
           if (_systemsRoot[i].StartEnabled) {
             try {
               _systemsRoot[i].OnEnabled(f);
-              
+
               if (f.CommitCommandsMode == CommitCommandsModes.InBetweenSystems) {
                 f.Unsafe.CommitAllCommands();
               }
@@ -3055,6 +3568,13 @@ namespace Quantum {
       }
     }
 
+    /// <summary>
+    /// Asks the game to de-serialize input into the buffers, because it's game specific it cannot be done from here.
+    /// </summary>
+    /// <param name="player">The player the input is for</param>
+    /// <param name="data">The input data</param>
+    /// <param name="buffer">The destination buffer</param>
+    /// <param name="verified">Is the input verified</param>
     public void DeserializeInputInto(int player, byte[] data, byte* buffer, bool verified) {
       if (_inputSerializerRead == null) {
         _inputStreamReadZeroArray = new Byte[1024];
@@ -3108,6 +3628,11 @@ namespace Quantum {
       Log.Exception("## Simulation Code Threw Exception ##", exn);
     }
 
+    /// <summary>
+    /// Creates information send to the server when detecting a checksum error.
+    /// </summary>
+    /// <param name="frame">Frame</param>
+    /// <returns>Serialized frame dump context</returns>
     public byte[] GetExtraErrorFrameDumpData(DeterministicFrame frame) {
       using (var stream = new MemoryStream()) {
         using (var writer = new BinaryWriter(stream)) {
@@ -3118,6 +3643,10 @@ namespace Quantum {
       }
     }
 
+    /// <summary>
+    /// Trigger the heap allocation tracker during <see cref="OnDestroy"/>.
+    /// </summary>
+    /// <exception cref="ArgumentOutOfRangeException">Is raised when HeapTrackingMode is unknown</exception>
     public void CheckTrackedHeapAllocations() {
       if (_context == null) {
         return;
@@ -3158,7 +3687,9 @@ namespace Quantum {
     Dictionary<EventKey, bool> _eventsTriggered; 
     Queue<EventKey> _eventsConfirmationQueue;
 
-
+    /// <summary>
+    /// The number of events in the queue waiting for confirmation.
+    /// </summary>
     public int EventWaitingForConfirmationCount => _eventsConfirmationQueue.Count;
 
     void InitEventInvoker(Int32 size) {
@@ -3207,7 +3738,7 @@ namespace Quantum {
 
             // if this was already raised, do nothing
             if (!_eventsTriggered.TryGetValue(key, out var alreadyConfirmed)) {
-              // dont trigger this again
+              // don't trigger this again
               _eventsTriggered.Add(key, confirmed);
               // trigger event
               RaiseEvent(head);
@@ -3228,7 +3759,7 @@ namespace Quantum {
 
         var key = _eventsConfirmationQueue.Peek();
 
-        // need to wait; this will block confirmations from resimulations to maintain order
+        // need to wait; this will block confirmations from re-simulations to maintain order
         if (!Session.IsFrameVerified(key.Tick)) {
           Assert.Check(key.Tick <= Session.FrameVerified.Number + Session.RollbackWindow);
           break;
@@ -3258,12 +3789,34 @@ namespace Quantum {
 
   public partial class QuantumGame {
 
+    /// <summary>
+    /// The recorded raw inputs.
+    /// The raw input recording automatically start when <see cref="SessionRunner.Arguments.RecordingFlags"/> contains
+    /// <see cref="RecordingFlags.Input"/> and <see cref="DeterministicSessionConfig.InputDeltaCompression"/> is disabled.
+    /// The recording can also be started by calling <see cref="StartRecordingInput"/> manually.
+    /// </summary>
     public InputProvider RecordedInputs { get; private set; }
+    /// <summary>
+    /// The recorded checksums.
+    /// The checksum recording automatically start when <see cref="SessionRunner.Arguments.RecordingFlags"/> contains
+    /// <see cref="RecordingFlags.Checksums"/> and <see cref="DeterministicSessionConfig.ChecksumInterval"/> > 0.
+    /// The recording can also be started by calling <see cref="StartRecordingChecksums"/> manually.
+    /// </summary>
     public ChecksumFile RecordedChecksums { get; private set; }
+    /// <summary>
+    /// The recorded delta compressed input stream.
+    /// The raw input recording automatically start when <see cref="SessionRunner.Arguments.RecordingFlags"/> contains
+    /// <see cref="RecordingFlags.Input"/> and <see cref="DeterministicSessionConfig.InputDeltaCompression"/> is enabled.
+    /// The recording can also be started by calling <see cref="StartRecordingInput"/> manually.    /// </summary>
     public Stream RecordInputStream { get; set; }
     
     ChecksumFile _checksumsToVerify;
 
+    /// <summary>
+    /// Get a recorded frame for a given frame number from the checksum or instant replay snapshot buffers.
+    /// </summary>
+    /// <param name="frame">Frame number</param>
+    /// <returns>Frame</returns>
     public Frame GetInstantReplaySnapshot(int frame) {
       if (!_instantReplaySnapshotsRecording) {
         Log.Error("Can't find any recorded snapshots. Use StartRecordingSnapshots to start recording.");
@@ -3286,6 +3839,12 @@ namespace Quantum {
       return (Frame)result;
     }
 
+    /// <summary>
+    /// Get recorded frames for a given frame number window from the checksum or instant replay snapshot buffers.
+    /// </summary>
+    /// <param name="startFrame">Start frame</param>
+    /// <param name="endFrame">End frame</param>
+    /// <param name="frames">Resulting frames</param>
     public void GetInstantReplaySnapshots(int startFrame, int endFrame, List<Frame> frames) {
       if (!_instantReplaySnapshotsRecording) {
         Log.Error("Can't find any recorded snapshots. Use StartRecordingSnapshots to start recording.");
@@ -3308,6 +3867,11 @@ namespace Quantum {
       }
     }
 
+    /// <summary>
+    /// Create a <see cref="QuantumReplayFile"/> file that represents a save game.
+    /// </summary>
+    /// <param name="includeDb">Include the AssetDb</param>
+    /// <returns>Replay file to be stored</returns>
     public QuantumReplayFile CreateSavegame(bool includeDb = false) {
       if (Frames.Verified == null) {
         Log.Error("Cannot create a savegame. Frames verified not found.");
@@ -3331,6 +3895,16 @@ namespace Quantum {
       return result;
     }
 
+    /// <summary>
+    /// Creates a replay file that represents a recorded replay of the complete simulation.
+    /// Requires the <see cref="RecordingFlags"/> to be set accordingly.
+    /// </summary>
+    /// <param name="includeChecksums">Include checksums</param>
+    /// <param name="includeDb">Include the asset db</param>
+    /// <param name="customAssetDbSerializer">A custom asset serializer</param>
+    /// <param name="customRuntimeConfigSerializer">A custom runtime config serializer</param>
+    /// <param name="customInputSerializer">A custom input serialized</param>
+    /// <returns>Replay file to store</returns>
     public QuantumReplayFile GetRecordedReplay(
       bool includeChecksums = false, 
       bool includeDb = false,
@@ -3414,6 +3988,13 @@ namespace Quantum {
       }
     }
 
+    /// <summary>
+    /// Manually start the input recording.
+    /// Either accessible by 
+    /// <see cref="RecordedInputs"/> (if <see cref="DeterministicSessionConfig.InputDeltaCompression"/> is disabled) or
+    /// <see cref="RecordInputStream"/> (if <see cref="DeterministicSessionConfig.InputDeltaCompression"/> is enabled).
+    /// </summary>
+    /// <param name="startFrame"></param>
     public void StartRecordingInput(Int32? startFrame = null) {
       if (Session == null) {
         Log.Error("Can't start input recording, because the session is invalid. Wait for the OnGameStart callback.");
@@ -3438,6 +4019,9 @@ namespace Quantum {
       Log.Info("QuantumGame.ReplayTools: Input recording started");
     }
 
+    /// <summary>
+    /// Manually start the recording of checksums.
+    /// </summary>
     public void StartRecordingChecksums() {
       if (RecordedChecksums == null) {
         RecordedChecksums = new ChecksumFile();
@@ -3445,6 +4029,10 @@ namespace Quantum {
       }
     }
 
+    /// <summary>
+    /// Start verifying new checksums against a recorded checksum file.
+    /// </summary>
+    /// <param name="checksums">Recorded checksum file</param>
     public void StartVerifyingChecksums(ChecksumFile checksums) {
       if (_checksumsToVerify == null) {
         _checksumsToVerify = checksums;
@@ -3452,6 +4040,10 @@ namespace Quantum {
       }
     }
 
+    /// <summary>
+    /// Manually start recording instant replay snapshots.
+    /// Requires <see cref="InstantReplayConfig"/> to be set accordingly.
+    /// </summary>
     public void StartRecordingInstantReplaySnapshots() {
       if (_instantReplaySnapshotsRecording) {
         return;
@@ -3579,28 +4171,87 @@ namespace Quantum {
   using System.IO;
   using System.Text;
   using Photon.Deterministic;
-  using Photon.Deterministic.Protocol;
   using Quantum.Profiling;
 
+  /// <summary>
+  /// Quantum game callback ids.
+  /// </summary>
   public enum CallbackId {
+    /// <summary>
+    /// Callback called when the simulation queries local input.
+    /// </summary>
     PollInput,
+    /// <summary>
+    /// Callback called when the game has been started.
+    /// </summary>
     GameInit,
+    /// <summary>
+    /// Callback called when the game has been started.
+    /// </summary>
     GameStarted,
+    /// <summary>
+    /// Callback called when the game has been re-synchronized from a snapshot.
+    /// </summary>
     GameResynced,
+    /// <summary>
+    /// Callback called when the game was destroyed.
+    /// </summary>
     GameDestroyed,
+    /// <summary>
+    /// Callback guaranteed to be called every rendered frame.
+    /// </summary>
     UpdateView,
+    /// <summary>
+    /// Callback called when frame simulation has completed.
+    /// </summary>
     SimulateFinished,
+    /// <summary>
+    /// Callback called when an event raised in a predicted frame was canceled in a verified frame due to a roll-back / missed prediction.
+    /// </summary>
     EventCanceled,
+    /// <summary>
+    /// Callback called when an event was confirmed by a verified frame.
+    /// </summary>
     EventConfirmed,
+    /// <summary>
+    /// Callback called on a checksum error.
+    /// </summary>
     ChecksumError,
+    /// <summary>
+    /// Callback called a frame dump is received due to a checksum error.
+    /// </summary>
     ChecksumErrorFrameDump,
+    /// <summary>
+    /// Callback when input was confirmed. 
+    /// </summary>
     InputConfirmed,
+    /// <summary>
+    /// Callback called when a checksum has been computed.
+    /// </summary>
     ChecksumComputed,
+    /// <summary>
+    /// Callback called when the local client is disconnected by the plugin.
+    /// </summary>
     PluginDisconnect,
+    /// <summary>
+    /// Callback when a local player was successfully added to the game.
+    /// </summary>
     PlayerAddConfirmed,
+    /// <summary>
+    /// Callback when a local player was successfully removed from the game.
+    /// </summary>
     PlayerRemoveConfirmed,
+    /// <summary>
+    /// Callback when a adding a local player failed.
+    /// </summary>
     PlayerAddFailed,
+    /// <summary>
+    /// Callback when removing a local player failed.
+    /// </summary>
     PlayerRemoveFailed,
+    /// <summary>
+    /// A tag where user callbacks can start.
+    /// </summary>
     UserCallbackIdStart,
   }
 
@@ -3608,56 +4259,112 @@ namespace Quantum {
   /// Callback called when the simulation queries local input.
   /// </summary>
   public sealed class CallbackPollInput : QuantumGame.CallbackBase {
+    /// <summary>
+    /// The const CallbackPollInput id.
+    /// </summary>
     public new const Int32 ID = (int)CallbackId.PollInput;
+
     internal CallbackPollInput(QuantumGame game) : base(ID, game) { }
 
+    /// <summary>
+    /// The frame number the input is polled for.
+    /// </summary>
     public Int32 Frame;
+    /// <summary>
+    /// The local player slot the input is polled for (this is not the global player number).
+    /// </summary>
     public Int32 PlayerSlot;
+    /// <summary>
+    /// Obsolete, renamed to PlayerSlot.
+    /// </summary>
     [Obsolete("Renamed to PlayerSlot because it's the local player slot instead of a global player.")]
     public Int32 Player {
       get { return PlayerSlot; }
       set { Frame = PlayerSlot; }
     }
 
+    /// <summary>
+    /// Set the polled input result.
+    /// </summary>
+    /// <param name="input">Input object</param>
+    /// <param name="flags">Flags</param>
     public void SetInput(Input input, DeterministicInputFlags flags) {
       IsInputSet = true;
       Input = input;
       Flags = flags;
     }
 
+    /// <summary>
+    /// Set the polled input result.
+    /// </summary>
+    /// <param name="input">Input tuple</param>
     public void SetInput(QTuple<Input, DeterministicInputFlags> input) {
       SetInput(input.Item0, input.Item1);
     }
 
+    /// <summary>
+    /// Is set to true if this is first time ever that input is pulled in this simulation.
+    /// </summary>
     public bool IsFirstInThisUpdate { get; internal set; }
+    /// <summary>
+    /// Will be marked as set after <see cref="SetInput(Input, DeterministicInputFlags)"/> has been called.
+    /// </summary>
     public bool IsInputSet { get; internal set; }
+    /// <summary>
+    /// Access the set input. Use <see cref="SetInput(Input, DeterministicInputFlags)"/> to set.
+    /// </summary>
     public Input Input { get; private set; }
+    /// <summary>
+    /// Access the input flags. Use <see cref="SetInput(Input, DeterministicInputFlags)"/> to set.
+    /// </summary>
     public DeterministicInputFlags Flags { get; private set; }
   }
 
   /// <summary>
-  /// Callback called when the game has been started.
+  /// Callback called when the game is about to start.
   /// </summary>
-  public sealed class CallbackGameInit: QuantumGame.CallbackBase {
+  public sealed class CallbackGameInit : QuantumGame.CallbackBase {
+    /// <summary>
+    /// The const CallbackGameInit callback id.
+    /// </summary>
     public new const Int32 ID = (int)CallbackId.GameInit;
+
+    /// <summary>
+    /// Is true when the simulation is paused and waits for snapshot to commence the start.
+    /// </summary>
     public bool IsResync;
+
     internal CallbackGameInit(QuantumGame game) : base(ID, game) { }
   }
 
   /// <summary>
-  /// Callback called when the game has been started.
+  /// Is called during <see cref="QuantumGame.OnGameStart"/> or <see cref="QuantumGame.OnGameResync"/>
+  /// when the game is started after systems are initialized and the snapshot has arrived for late-joining clients.
   /// </summary>
   public sealed class CallbackGameStarted : QuantumGame.CallbackBase {
+    /// <summary>
+    /// The const CallbackGameStarted callback id.
+    /// </summary>
     public new const Int32 ID = (int)CallbackId.GameStarted;
+
+    /// <summary>
+    /// Is true if the game was started from a snapshot.
+    /// </summary>
     public bool IsResync;
+
     internal CallbackGameStarted(QuantumGame game) : base(ID, game) { }
   }
 
   /// <summary>
-  /// Callback called when the game has been re-synchronized from a snapshot.
+  /// Callback called when the game has been re-synchronized from a snapshot and is about to start.
+  /// Will be followed by the <see cref="CallbackGameStarted"/> callback."/>
   /// </summary>
   public sealed class CallbackGameResynced : QuantumGame.CallbackBase {
+    /// <summary>
+    /// The const CallbackGameResynced callback id.
+    /// </summary>
     public new const Int32 ID = (int)CallbackId.GameResynced;
+
     internal CallbackGameResynced(QuantumGame game) : base(ID, game) { }
   }
 
@@ -3665,7 +4372,11 @@ namespace Quantum {
   /// Callback called when the game was destroyed.
   /// </summary>
   public sealed class CallbackGameDestroyed : QuantumGame.CallbackBase {
+    /// <summary>
+    /// The const CallbackGameDestroyed callback id.
+    /// </summary>
     public new const Int32 ID = (int)CallbackId.GameDestroyed;
+
     internal CallbackGameDestroyed(QuantumGame game) : base(ID, game) { }
   }
 
@@ -3673,7 +4384,11 @@ namespace Quantum {
   /// Callback guaranteed to be called every rendered frame.
   /// </summary>
   public sealed class CallbackUpdateView : QuantumGame.CallbackBase {
+    /// <summary>
+    /// The const CallbackUpdateView callback id.
+    /// </summary>
     public new const Int32 ID = (int)CallbackId.UpdateView;
+
     internal CallbackUpdateView(QuantumGame game) : base(ID, game) { }
   }
 
@@ -3681,9 +4396,16 @@ namespace Quantum {
   /// Callback called when frame simulation has completed.
   /// </summary>
   public sealed class CallbackSimulateFinished : QuantumGame.CallbackBase {
+    /// <summary>
+    /// The const CallbackSimulateFinished callback id.
+    /// </summary>
     public new const Int32 ID = (int)CallbackId.SimulateFinished;
+
     internal CallbackSimulateFinished(QuantumGame game) : base(ID, game) { }
 
+    /// <summary>
+    /// The frame that was simulated.
+    /// </summary>
     public Frame Frame;
   }
 
@@ -3692,9 +4414,16 @@ namespace Quantum {
   /// Synchronised events are only raised on verified frames and thus will never be canceled; this is useful to graciously discard non-sync'ed events in the view.
   /// </summary>
   public sealed class CallbackEventCanceled : QuantumGame.CallbackBase {
+    /// <summary>
+    /// The const CallbackEventCanceled callback id.
+    /// </summary>
     public new const Int32 ID = (int)CallbackId.EventCanceled;
+
     internal CallbackEventCanceled(QuantumGame game) : base(ID, game) { }
 
+    /// <summary>
+    /// The event key of the event that was canceled.
+    /// </summary>
     public EventKey EventKey;
   }
 
@@ -3702,9 +4431,16 @@ namespace Quantum {
   /// Callback called when an event was confirmed by a verified frame.
   /// </summary>
   public sealed class CallbackEventConfirmed : QuantumGame.CallbackBase {
+    /// <summary>
+    /// The const CallbackEventConfirmed callback id.
+    /// </summary>
     public new const Int32 ID = (int)CallbackId.EventConfirmed;
+
     internal CallbackEventConfirmed(QuantumGame game) : base(ID, game) { }
 
+    /// <summary>
+    /// The event key of the event that has been verified and confirmed.
+    /// </summary>
     public EventKey EventKey;
   }
 
@@ -3712,16 +4448,35 @@ namespace Quantum {
   /// Callback called on a checksum error.
   /// </summary>
   public sealed class CallbackChecksumError : QuantumGame.CallbackBase {
+    /// <summary>
+    /// The const CallbackChecksumError callback id.
+    /// </summary>
     public new const Int32 ID = (int)CallbackId.ChecksumError;
+
     internal CallbackChecksumError(QuantumGame game) : base(ID, game) { }
 
+    /// <summary>
+    /// The checksum error details.
+    /// </summary>
     public DeterministicTickChecksumError Error;
     internal DeterministicFrame[] _rawFrames;
     internal Frame[] _convertedFrame;
 
+    /// <summary>
+    /// The number of frames associated with this error.
+    /// </summary>
     public int FrameCount => Frames.Length;
+
+    /// <summary>
+    /// Access the frame by index
+    /// </summary>
+    /// <param name="index">Index</param>
+    /// <returns>Frame</returns>
     public Frame GetFrame(int index) => (Frame)Frames[index];
 
+    /// <summary>
+    /// Get all frames associated with this error.
+    /// </summary>
     public Frame[] Frames {
       get {
         if (_convertedFrame == null) {
@@ -3736,18 +4491,43 @@ namespace Quantum {
   }
 
   /// <summary>
-  /// Callback called when due to a checksum error a frame is dumped.
+  /// Callback called a frame dump is received due to a checksum error.
   /// </summary>
   public sealed class CallbackChecksumErrorFrameDump : QuantumGame.CallbackBase {
+    /// <summary>
+    /// The const CallbackChecksumErrorFrameDump callback id.
+    /// </summary>
     public new const Int32 ID = (int)CallbackId.ChecksumErrorFrameDump;
+
     internal CallbackChecksumErrorFrameDump(QuantumGame game) : base(ID, game) { }
 
+    /// <summary>
+    /// The actor id of that send this error dump.
+    /// </summary>
     public Int32 ActorId;
+    /// <summary>
+    /// The frame number that the dump belongs to.
+    /// </summary>
     public Int32 FrameNumber;
+    /// <summary>
+    /// The serialized frame data.
+    /// </summary>
     public Byte[] FrameData;
+    /// <summary>
+    /// The serialized runtime config.
+    /// </summary>
     public Byte[] RuntimeConfigBytes;
+    /// <summary>
+    /// The serialized extra meta information added to the frame dump.
+    /// </summary>
     public Byte[] ExtraBytes;
+    /// <summary>
+    /// The session config.
+    /// </summary>
     public DeterministicSessionConfig SessionConfig;
+    /// <summary>
+    /// The asset serializer.
+    /// </summary>
     public IAssetSerializer Serializer;
 
     private Frame _frameToOverride;
@@ -3795,6 +4575,9 @@ namespace Quantum {
       }
     }
 
+    /// <summary>
+    /// Deserialize the frame dump.
+    /// </summary>
     public Frame Frame {
       get {
         if (!_frame.Item0) {
@@ -3807,7 +4590,7 @@ namespace Quantum {
               _overridenFrameData = originalFrameData;
             } catch (System.Exception ex) {
               // revert to the old data
-              Log.Warn($"Failed to deserilize dump frame. The snapshot will appear as raw data.\n{ex}");
+              Log.Warn($"Failed to deserialize dump frame. The snapshot will appear as raw data.\n{ex}");
               _frameToOverride.Deserialize(originalFrameData);
             }
 
@@ -3829,6 +4612,9 @@ namespace Quantum {
       }
     }
 
+    /// <summary>
+    /// The frame dump as a string.
+    /// </summary>
     public string FrameDump {
       get {
         if (!_frameDump.Item0) {
@@ -3890,7 +4676,9 @@ namespace Quantum {
       }
     }
 
-
+    /// <summary>
+    /// Deserializes the runtime config.
+    /// </summary>
     public RuntimeConfig RuntimeConfig {
       get {
         if (!_runtimeConfig.Item0) {
@@ -3905,12 +4693,18 @@ namespace Quantum {
       }
     }
 
+    /// <summary>
+    /// Access the simulation config.
+    /// </summary>
     public SimulationConfig SimulationConfig => Context?.SimulationConfig;
 
     internal void Init(Frame frame) {
       _frameToOverride = frame;
     }
 
+    /// <summary>
+    /// Deserialize the frame dump context.
+    /// </summary>
     public ChecksumErrorFrameDumpContext Context {
       get {
         if (!_context.Item0) {
@@ -3929,11 +4723,18 @@ namespace Quantum {
   }
 
   /// <summary>
-  /// Callback when local input was confirmed.
+  /// Callback when input was confirmed.
   /// </summary>
   public sealed class CallbackInputConfirmed : QuantumGame.CallbackBase {
+    /// <summary>
+    /// The const CallbackInputConfirmed callback id.
+    /// </summary>
     public new const Int32 ID = (int)CallbackId.InputConfirmed;
     internal CallbackInputConfirmed(QuantumGame game) : base(ID, game) { }
+
+    /// <summary>
+    /// The verified input object.
+    /// </summary>
     public DeterministicFrameInputTemp Input;
   }
 
@@ -3941,10 +4742,20 @@ namespace Quantum {
   /// Callback called when a checksum has been computed.
   /// </summary>
   public sealed class CallbackChecksumComputed : QuantumGame.CallbackBase {
+    /// <summary>
+    /// The const CallbackChecksumComputed callback id.
+    /// </summary>
     public new const Int32 ID = (int)CallbackId.ChecksumComputed;
+
     internal CallbackChecksumComputed(QuantumGame game) : base(ID, game) { }
 
+    /// <summary>
+    /// The frame number the checksum was computed for.
+    /// </summary>
     public Int32 Frame;
+    /// <summary>
+    /// The checksum value.
+    /// </summary>
     public UInt64 Checksum;
   }
 
@@ -3952,58 +4763,138 @@ namespace Quantum {
   /// Callback called when the local client is disconnected by the plugin.
   /// </summary>
   public sealed class CallbackPluginDisconnect : QuantumGame.CallbackBase {
+    /// <summary>
+    /// The const CallbackPluginDisconnect callback id.
+    /// </summary>
     public new const Int32 ID = (int)CallbackId.PluginDisconnect;
+
     internal CallbackPluginDisconnect(QuantumGame game) : base(ID, game) { }
 
+    /// <summary>
+    /// Debug string of the disconnect reason.
+    /// </summary>
     public string Reason;
   }
 
+  /// <summary>
+  /// Callback when a local player was successfully added to the game.
+  /// </summary>
   public sealed class CallbackLocalPlayerAddConfirmed : QuantumGame.CallbackBase {
+    /// <summary>
+    /// The const CallbackLocalPlayerAddConfirmed callback id.
+    /// </summary>
     public new const Int32 ID = (int)CallbackId.PlayerAddConfirmed;
+
     internal CallbackLocalPlayerAddConfirmed(QuantumGame game) : base(ID, game) { }
 
+    /// <summary>
+    /// The frame the player was added.
+    /// </summary>
     public Frame Frame;
+    /// <summary>
+    /// The local player index.
+    /// </summary>
     public int PlayerSlot;
+    /// <summary>
+    /// The global player number.
+    /// </summary>
     public PlayerRef Player;
   }
 
+  /// <summary>
+  /// Callback when a local player was successfully removed from the game.
+  /// </summary>
   public sealed class CallbackLocalPlayerRemoveConfirmed : QuantumGame.CallbackBase {
+    /// <summary>
+    /// The const CallbackLocalPlayerRemoveConfirmed callback id.
+    /// </summary>
     public new const Int32 ID = (int)CallbackId.PlayerAddFailed;
+
     internal CallbackLocalPlayerRemoveConfirmed(QuantumGame game) : base(ID, game) { }
 
+    /// <summary>
+    /// The frame the player was removed.
+    /// </summary>
     public Frame Frame;
+    /// <summary>
+    /// The local player slot that was removed.
+    /// </summary>
     public int PlayerSlot;
+    /// <summary>
+    /// The global player number that was removed.
+    /// </summary>
     public PlayerRef Player;
   }
 
+  /// <summary>
+  /// Callback when a adding a local player failed.
+  /// </summary>
   public sealed class CallbackLocalPlayerAddFailed : QuantumGame.CallbackBase {
+    /// <summary>
+    /// The const CallbackLocalPlayerAddFailed callback id.
+    /// </summary>
     public new const Int32 ID = (int)CallbackId.PlayerRemoveFailed;
+
     internal CallbackLocalPlayerAddFailed(QuantumGame game) : base(ID, game) { }
 
+    /// <summary>
+    /// The player slot that was tried to be added and failed.
+    /// </summary>
     public int PlayerSlot;
+    /// <summary>
+    /// The error debug message.
+    /// </summary>
     public string Message;
   }
 
+  /// <summary>
+  /// Callback when removing a local player failed.
+  /// </summary>
   public sealed class CallbackLocalPlayerRemoveFailed : QuantumGame.CallbackBase {
+    /// <summary>
+    /// The const CallbackLocalPlayerRemoveFailed callback id.
+    /// </summary>
     public new const Int32 ID = (int)CallbackId.PlayerRemoveConfirmed;
+
     internal CallbackLocalPlayerRemoveFailed(QuantumGame game) : base(ID, game) { }
 
+    /// <summary>
+    /// The local player slot that was tried to be removed and failed.
+    /// </summary>
     public int PlayerSlot;
+    /// <summary>
+    /// The error debug message.
+    /// </summary>
     public string Message;
   }
 
   partial class QuantumGame {
-
+    /// <summary>
+    /// The base class of Quantum callbacks.
+    /// </summary>
     public class CallbackBase : Quantum.CallbackBase {
+      /// <summary>
+      /// The assigned game.
+      /// </summary>
       public new QuantumGame Game {
         get => (QuantumGame)base.Game;
         set => base.Game = value;
       }
 
+      /// <summary>
+      /// Constructor.
+      /// </summary>
+      /// <param name="id">The const callback id.</param>
+      /// <param name="game">The game that the callback is invoked for</param>
       public CallbackBase(int id, QuantumGame game) : base(id, game) {
       }
 
-
+      /// <summary>
+      /// Maps the const callback id <see cref="CallbackId"/> to a callback system type.
+      /// </summary>
+      /// <param name="id">Callback id</param>
+      /// <returns>System type of the associated callback</returns>
+      /// <exception cref="ArgumentOutOfRangeException">Is raised when the id is not known</exception>
       public static Type GetCallbackType(CallbackId id) {
         switch (id) {
           case CallbackId.ChecksumComputed: return typeof(CallbackChecksumComputed);
@@ -4047,7 +4938,9 @@ namespace Quantum {
     private CallbackLocalPlayerAddFailed _callbackLocalPlayerAddFailed;
     private CallbackLocalPlayerRemoveFailed _callbackLocalPlayerRemoveFailed;
 
-
+    /// <summary>
+    /// Initializes all callbacks.
+    /// </summary>
     public void InitCallbacks() {
       _callbackChecksumComputed = new CallbackChecksumComputed(this);
       _callbackChecksumError = new CallbackChecksumError(this);
@@ -4069,11 +4962,12 @@ namespace Quantum {
       _callbackLocalPlayerRemoveFailed = new CallbackLocalPlayerRemoveFailed(this);
     }
 
-    public void InvokeOnGameEnded() {
+
+    void InvokeOnGameEnded() {
       // not implemented 
     }
 
-    public void InvokeOnDestroy() {
+    void InvokeOnDestroy() {
       try {
         _callbackDispatcher?.Publish(_callbackGameDestroyed);
       } catch (Exception ex) {
@@ -4137,7 +5031,7 @@ namespace Quantum {
       HostProfiler.End();
     }
 
-    public void InvokeOnSimulateFinished(DeterministicFrame state) {
+    void InvokeOnSimulateFinished(DeterministicFrame state) {
       HostProfiler.Start("QuantumGame.InvokeOnSimulateFinished");
       try {
         _callbackSimulateFinished.Frame = (Frame)state;
@@ -4150,7 +5044,7 @@ namespace Quantum {
       HostProfiler.End();
     }
 
-    public void InvokeOnChecksumError(DeterministicTickChecksumError error, DeterministicFrame[] frames) {
+    void InvokeOnChecksumError(DeterministicTickChecksumError error, DeterministicFrame[] frames) {
       try {
         _callbackChecksumError.Error = error;
         _callbackChecksumError._rawFrames = frames;
@@ -4166,7 +5060,7 @@ namespace Quantum {
       }
     }
 
-    public void InvokeOnChecksumComputed(Int32 frame, ulong checksum) {
+    void InvokeOnChecksumComputed(Int32 frame, ulong checksum) {
       try {
         _callbackChecksumComputed.Frame = frame;
         _callbackChecksumComputed.Checksum = checksum;
@@ -4176,7 +5070,7 @@ namespace Quantum {
       }
     }
 
-    public void InvokeOnInputConfirmed(DeterministicFrameInputTemp input) {
+    void InvokeOnInputConfirmed(DeterministicFrameInputTemp input) {
       try {
         _callbackInputConfirmed.Input = input;
         try {
@@ -4189,7 +5083,7 @@ namespace Quantum {
       }
     }
 
-    public void InvokeOnChecksumErrorFrameDump(Int32 actorId, Int32 frameNumber, DeterministicSessionConfig sessionConfig, byte[] runtimeConfig, byte[] frameData, byte[] extraData, IAssetSerializer serializer) {
+    void InvokeOnChecksumErrorFrameDump(Int32 actorId, Int32 frameNumber, DeterministicSessionConfig sessionConfig, byte[] runtimeConfig, byte[] frameData, byte[] extraData, IAssetSerializer serializer) {
       HostProfiler.Start("QuantumGame.InvokeOnChecksumErrorFrameDump");
       try {
 
@@ -4227,7 +5121,7 @@ namespace Quantum {
       HostProfiler.End();
     }
 
-    private void InvokeOnEvent(EventKey key, bool confirmed) {
+    void InvokeOnEvent(EventKey key, bool confirmed) {
       HostProfiler.Start("QuantumGame.InvokeOnEvent");
       try {
         if (confirmed) {
@@ -4245,7 +5139,7 @@ namespace Quantum {
       HostProfiler.End();
     }
 
-    public void InvokeOnPluginDisconnect(string reason) {
+    void InvokeOnPluginDisconnect(string reason) {
       try {
         _callbackPluginDisconnect.Reason = reason;
         _callbackDispatcher?.Publish(_callbackPluginDisconnect);
@@ -4254,7 +5148,7 @@ namespace Quantum {
       }
     }
 
-    public void InvokeOnLocalPlayerAddConfirmed(Frame frame, int playerSlot, PlayerRef player) {
+    void InvokeOnLocalPlayerAddConfirmed(Frame frame, int playerSlot, PlayerRef player) {
       try {
         _callbackLocalPlayerAddConfirmed.Frame = frame;
         _callbackLocalPlayerAddConfirmed.PlayerSlot = playerSlot;
@@ -4265,7 +5159,7 @@ namespace Quantum {
       }
     }
 
-    public void InvokeOnLocalPlayerRemoveConfirmed(Frame frame, int playerSlot, PlayerRef player) {
+    void InvokeOnLocalPlayerRemoveConfirmed(Frame frame, int playerSlot, PlayerRef player) {
       try {
         _callbackLocalPlayerRemoveConfirmed.Frame = frame;
         _callbackLocalPlayerRemoveConfirmed.PlayerSlot = playerSlot;
@@ -4276,7 +5170,7 @@ namespace Quantum {
       }
     }
 
-    public void InvokeOnLocalPlayerAddFailed(int playerSlot, string message) {
+    void InvokeOnLocalPlayerAddFailed(int playerSlot, string message) {
       try {
         _callbackLocalPlayerAddFailed.PlayerSlot = playerSlot;
         _callbackLocalPlayerAddFailed.Message = message;
@@ -4286,7 +5180,7 @@ namespace Quantum {
       }
     }
 
-    public void InvokeOnLocalPlayerRemoveFailed(int playerSlot, string message) {
+    void InvokeOnLocalPlayerRemoveFailed(int playerSlot, string message) {
       try {
         _callbackLocalPlayerRemoveFailed.PlayerSlot = playerSlot;
         _callbackLocalPlayerRemoveFailed.Message = message;
@@ -4312,13 +5206,13 @@ namespace Quantum {
   public partial class QuantumGameFlags {
     /// <summary>
     /// Starts the game in the server mode. 
-    /// When this flag is not set, all the events marked with "server" get culled immediatelly.
-    /// If this flag is set, all the events marked with "client" get culled immediatelly.
+    /// When this flag is not set, all the events marked with "server" get culled immediately.
+    /// If this flag is set, all the events marked with "client" get culled immediately.
     /// </summary>
     public const int Server = 1 << 0;
     /// <summary>
     /// By default, QuantumGame uses a single shared checksum serializer to reduce allocations. 
-    /// The serializer is *not* static - it is only shared between frames comming from the same QuantumGame.
+    /// The serializer is *not* static - it is only shared between frames coming from the same QuantumGame.
     /// Set this flag if you want to disable this behaviour, for example if you calculate
     /// checksums for multiple frames using multiple threads.
     /// </summary>
@@ -4489,6 +5383,7 @@ namespace Quantum {
     /// <param name="provider">Input provider</param>
     /// <param name="clientId">Optional client id</param>
     /// <param name="logInitForConsole">Optionally disable setting up the console as log output (required on the Quantum plugin)</param>
+    /// <param name="taskRunner">Task runner</param>
     [Obsolete("Use SessionRunner class")]
     public void StartReplay(QuantumGame.StartParameters startParams, IDeterministicReplayProvider provider, string clientId = "server", bool logInitForConsole = true, IDeterministicPlatformTaskRunner taskRunner = null) {
       DeterministicSessionArgs sessionArgs;
@@ -4509,11 +5404,12 @@ namespace Quantum {
     /// Start the simulation as a spectator.
     /// </summary>
     /// <param name="startParams">Game start parameters</param>
-    /// <param name="networkCommunicator">Quantum network comunicator (has to have a peer that is connected to a room</param>
+    /// <param name="networkCommunicator">Quantum network communicator (has to have a peer that is connected to a room</param>
     /// <param name="frameData">Optionally the frame to start from</param>
     /// <param name="initialTick">The tick that the frame data is based on</param>
     /// <param name="clientId">Optional client id</param>
     /// <param name="logInitForConsole">Optionally disable setting up the console as log output (required on the Quantum plugin)</param>
+    /// <param name="taskRunner">Task runner</param>
     [Obsolete("Use SessionRunner class")]
     public void StartSpectator(QuantumGame.StartParameters startParams, ICommunicator networkCommunicator, byte[] frameData = null, int initialTick = 0, string clientId = "observer", bool logInitForConsole = true, IDeterministicPlatformTaskRunner taskRunner = null) {
       DeterministicSessionArgs sessionArgs;
@@ -4541,9 +5437,9 @@ namespace Quantum {
     /// </summary>
     /// <param name="startParams">Game start parameters</param>
     /// <param name="sessionArgs">Game session args</param>
-    /// <param name="playerSlots">Number of player slots</param>
     /// <param name="clientId">Optional client id</param>
     /// <param name="logInitForConsole">Optionally disable setting up the console as log output (required on the Quantum plugin)</param>
+    /// <param name="taskRunner">Task runner</param>
     [Obsolete("Use SessionRunner class")]
     public void Start(QuantumGame.StartParameters startParams, DeterministicSessionArgs sessionArgs, string clientId = "server", bool logInitForConsole = true, IDeterministicPlatformTaskRunner taskRunner = null) {
         if (!_loadedAllStatics) {
@@ -4648,38 +5544,83 @@ namespace Quantum {
 namespace Quantum {
   using Photon.Deterministic;
 
+  /// <summary>
+  /// This implementation of <see cref="IDeterministicStreamReplayInputProvider"/> 
+  /// is used to provide delta compressed input for a Quantum simulation replay from a <see cref="BitStream"/>.
+  /// </summary>
   public class BitStreamReplayInputProvider : IDeterministicStreamReplayInputProvider {
     private int _maxFrame;
     private BitStream _inputStream;
 
+    /// <summary>
+    /// The max frame available to read.
+    /// </summary>
     public int MaxFrame => _maxFrame;
 
+    /// <summary>
+    /// Create input provider.
+    /// </summary>
+    /// <param name="inputStream">The input bitstream</param>
+    /// <param name="maxFrame">The max frame of the recorded replay</param>
     public BitStreamReplayInputProvider(BitStream inputStream, int maxFrame) {
       _inputStream = inputStream;
       _maxFrame = maxFrame;
     }
 
+    /// <summary>
+    /// Reset the stream to the beginning.
+    /// </summary>
+    public void Reset() {
+      _inputStream.Position = 0;
+    }
+
+    /// <summary>
+    /// Returns true if for the given frame input is available.
+    /// </summary>
+    /// <param name="frame">Requested frame</param>
+    /// <returns>True if input for that frame can be requested</returns>
     public bool CanSimulate(int frame) {
       return frame <= _maxFrame;
     }
 
+    /// <summary>
+    /// Read the size of the input from the stream.
+    /// It is expected that the input requested matches the input order in the stream.
+    /// </summary>
+    /// <param name="frame">Input requested for this frame</param>
+    /// <returns>The size of the input that can be read</returns>
     public int BeginReadFrame(int frame) {
       return _inputStream.ReadInt();
     }
 
+    /// <summary>
+    /// Actually read the input data.
+    /// </summary>
+    /// <param name="frame">The frame of the requested input</param>
+    /// <param name="length">The input length returned by <see cref="BeginReadFrame(int)"/></param>
+    /// <param name="data">The data to be copied to</param>
     public void CompleteReadFrame(int frame, int length, ref byte[] data) {
       _inputStream.ReadByteArray(data, length);
     }
 
+    /// <summary>
+    /// Unused.
+    /// </summary>
     public DeterministicFrameInputTemp GetInput(int frame, int player) {
       // unused
       return new DeterministicFrameInputTemp();
     }
 
+    /// <summary>
+    /// Unused.
+    /// </summary>
     public void AddRpc(int player, byte[] data, bool command) {
       // unused
     }
 
+    /// <summary>
+    /// Unused.
+    /// </summary>
     public QTuple<byte[], bool> GetRpc(int frame, int player) {
       // unused
       return new QTuple<byte[], bool>();
@@ -4695,19 +5636,36 @@ namespace Quantum {
 namespace Quantum {
   using System;
 
+  /// <summary>
+  /// A serializable object that contains recorded checksums for a Quantum session.
+  /// </summary>
   [Serializable]
   public class ChecksumFile {
+    /// <summary>
+    /// Grow the checksum array during recording by this amount.
+    /// </summary>
     public const int GrowSize = 60 * 60;
 
+    /// <summary>
+    /// Represents one recorded checksum.
+    /// </summary>
     [Serializable]
     public struct ChecksumEntry {
+      /// <summary>
+      /// The frame number the checksum was recorded for.
+      /// </summary>
       public int Frame;
-      // Unity JSON cannot read the unsigned long data type. 
-      // We can convert on this level, keeping the ULong CalculateChecksum() signature and encode the 
-      // checksum as a long for serialization. Any other ideas?
+      /// <summary>
+      /// Unity JSON cannot read the unsigned long data type. 
+      /// We can convert on this level, keeping the ULong CalculateChecksum() signature and encode the 
+      /// checksum as a long for serialization. Any other ideas?
+      /// </summary>
       public long ChecksumAsLong;
     }
 
+    /// <summary>
+    /// All recorded checksums.
+    /// </summary>
     public ChecksumEntry[] Checksums;
 
     private Int32 writeIndex;
@@ -4764,11 +5722,24 @@ namespace Quantum {
     }
   }
 
+  /// <summary>
+  /// Helper methods to convert between ulong and long.
+  /// </summary>
   public static class ChecksumFileHelper {
+    /// <summary>
+    /// Convert a ulong to a long.
+    /// </summary>
+    /// <param name="value">Value to convert</param>
+    /// <returns>Converted to long</returns>
     public static unsafe long UlongToLong(ulong value) {
       return *((long*)&value);
     }
 
+    /// <summary>
+    /// Reverse the conversion ulong to long.
+    /// </summary>
+    /// <param name="value">Value to convert back</param>
+    /// <returns>The ulong value representaiton of a long</returns>
     public static unsafe ulong LongToULong(long value) {
       return *((ulong*)&value);
     }
@@ -4786,9 +5757,18 @@ namespace Quantum {
   using System;
   using System.Threading;
 
+  /// <summary>
+  /// The implementation of <see cref="IDeterministicPlatformTaskRunner"/> for .Net frameworks.
+  /// Not used when running the simulation in Unity.
+  /// </summary>
   public class DotNetTaskRunner : IDeterministicPlatformTaskRunner {
     int _length;
     bool[] _done = new bool[128];
+
+    /// <summary>
+    /// Schedules actions to be executed by the task runner.
+    /// </summary>
+    /// <param name="delegates">Array of actions</param>
     public void Schedule(Action[] delegates) {
       // store how many we're executing
       _length = delegates.Length;
@@ -4801,9 +5781,18 @@ namespace Quantum {
         ThreadPool.QueueUserWorkItem(Wrap(i, delegates[i]));
       }
     }
+
+    /// <summary>
+    /// Wait for the task runner to complete all scheduled actions.
+    /// </summary>
     public void WaitForComplete() {
       throw new NotImplementedException();
     }
+
+    /// <summary>
+    /// Poll the task runner for completion.
+    /// </summary>
+    /// <returns></returns>
     public bool PollForComplete() {
       for (int i = 0; i < _length; ++i) {
         if (Volatile.Read(ref _done[i]) == false) {
@@ -4812,6 +5801,7 @@ namespace Quantum {
       }
       return true;
     }
+
     WaitCallback Wrap(int index, Action callback) {
       return _ => {
         try {
@@ -4825,6 +5815,9 @@ namespace Quantum {
       };
     }
 
+    /// <summary>
+    /// Dispose the object.
+    /// </summary>
     public void Dispose() {
     }
   }
@@ -4839,15 +5832,32 @@ namespace Quantum {
   using Photon.Deterministic;
   using System;
 
+  /// <summary>
+  /// An implementation of <see cref="IDeterministicPlatformTaskRunner"/> that forces the Quantum task system to run synchronously (single-threaded).
+  /// </summary>
   public class InactiveTaskRunner : IDeterministicPlatformTaskRunner {
+    /// <summary>
+    /// Schedules actions to be executed by the task runner.
+    /// </summary>
+    /// <param name="delegates">Array of actions</param>
     public void Schedule(Action[] delegates) { }
 
+    /// <summary>
+    /// Wait for the task runner to complete all scheduled actions.
+    /// </summary>
     public void WaitForComplete() { }
 
+    /// <summary>
+    /// Poll the task runner for completion.
+    /// </summary>
+    /// <returns></returns>
     public bool PollForComplete() {
       return true;
     }
 
+    /// <summary>
+    /// Dispose the object.
+    /// </summary>
     public void Dispose() { }
   }
 }
@@ -4862,31 +5872,59 @@ namespace Quantum {
   using System.Linq;
   using Photon.Deterministic;
 
+  /// <summary>
+  /// The input provider is used to push recorded inputs into the simulation.
+  /// This class uses the full input history instead of delta compressed input stream 
+  /// which uses a large memory footprint.
+  /// </summary>
   public class InputProvider : IDeterministicReplayProvider {
-    private int                         _playerCount;
-    private int                         _growSize;
-    private int                         _startFrame;
+    private int _playerCount;
+    private int _growSize;
+    private int _startFrame;
     private DeterministicTickInputSet[] _inputs;
 
     private int MaxFrame => _inputs.Length + _startFrame;
 
-    public InputProvider(DeterministicSessionConfig config, int capacity = 60 * 60, int growSize = 0) : this(config.PlayerCount, config.RollbackWindow, capacity, growSize) {
+    /// <summary>
+    /// Construct an input provider with a given capacity and grow size.
+    /// </summary>
+    /// <param name="config">Session config used to gather PlayerCount and RollbackWindow</param>
+    /// <param name="capacity">The initial capacity</param>
+    /// <param name="growSize">The grow size, 0 means doubling the buffer</param>
+    public InputProvider(DeterministicSessionConfig config, int capacity = 60 * 60, int growSize = 0) : 
+      this(config.PlayerCount, config.RollbackWindow, capacity, growSize) {
     }
 
+    /// <summary>
+    /// Construct an input provider with a given list of inputs.
+    /// </summary>
+    /// <param name="inputList">Input list</param>
     public InputProvider(DeterministicTickInputSet[] inputList) {
       ImportFromList(inputList);
     }
 
+    /// <summary>
+    /// Construct an input provider with a given player count, start frame, capacity and grow size.
+    /// </summary>
+    /// <param name="playerCount">Player count</param>
+    /// <param name="startFrame">Start frame</param>
+    /// <param name="capacity">The initial capacity</param>
+    /// <param name="growSize">The grow size, 0 means doubling the buffer</param>
     public InputProvider(int playerCount, int startFrame, int capacity, int growSize) {
       _playerCount = playerCount;
-      _startFrame  = startFrame;
-      _growSize    = growSize;
+      _startFrame = startFrame;
+      _growSize = growSize;
 
       if (capacity > 0) {
         Allocate(capacity);
       }
     }
 
+    /// <summary>
+    /// Returns true if the input provider can simulate the given frame.
+    /// </summary>
+    /// <param name="frame">Requested frame</param>
+    /// <returns>True if the input for this frame is available</returns>
     public bool CanSimulate(int frame) {
       var index = ToIndex(frame);
 
@@ -4897,6 +5935,10 @@ namespace Quantum {
       return false;
     }
 
+    /// <summary>
+    /// Clear all recorded inputs. Usually called after a resync.
+    /// </summary>
+    /// <param name="startFrame">New start frame</param>
     public void Clear(int startFrame) {
       _startFrame = startFrame;
       for (int i = 0; i < _inputs.Length; i++) {
@@ -4907,6 +5949,10 @@ namespace Quantum {
       }
     }
 
+    /// <summary>
+    /// Import a list of inputs into the input provider.
+    /// </summary>
+    /// <param name="inputList">A reference to the imported list is internally copied.</param>
     public void ImportFromList(DeterministicTickInputSet[] inputList) {
       _startFrame = inputList.Length == 0 ? 0 : inputList[0].Tick;
 
@@ -4919,6 +5965,11 @@ namespace Quantum {
       }
     }
 
+    /// <summary>
+    /// Export the inputs to a list.
+    /// </summary>
+    /// <param name="verifiedFrame">The max frame that in input available for</param>
+    /// <returns>A list on inputs that can be saved to a file.</returns>
     public DeterministicTickInputSet[] ExportToList(int verifiedFrame) {
       var size = _inputs.Length;
       while (size > 0 && _inputs[size - 1].Inputs.Any(x => x.Tick == 0 || x.Tick > verifiedFrame)) {
@@ -4936,6 +5987,11 @@ namespace Quantum {
       return result;
     }
 
+    /// <summary>
+    /// This callback is called when an input was confirmed and can be recorded.
+    /// </summary>
+    /// <param name="game">The game </param>
+    /// <param name="input">The confirmed input</param>
     public void OnInputConfirmed(QuantumGame game, DeterministicFrameInputTemp input) {
       if (input.Frame < _startFrame) {
         // if starting to record from a frame following a snapshot,
@@ -4944,7 +6000,7 @@ namespace Quantum {
       }
 
       if (input.Frame >= MaxFrame) {
-        var minSize  = Math.Max(input.Frame - _startFrame, _inputs.Length);
+        var minSize = Math.Max(input.Frame - _startFrame, _inputs.Length);
         var growSize = _growSize > 0 ? minSize + _growSize : minSize * 2;
         Allocate(growSize);
       }
@@ -4952,9 +6008,14 @@ namespace Quantum {
       _inputs[ToIndex(input.Frame)].Inputs[input.Player].Set(input);
     }
 
+    /// <summary>
+    /// Injects a random input.
+    /// </summary>
+    /// <param name="input">Input to inject</param>
+    /// <param name="localReplay">If set to true the input sent flag is set to true</param>
     public void InjectInput(DeterministicTickInput input, bool localReplay) {
       if (input.Tick >= MaxFrame) {
-        var minSize  = Math.Max(input.Tick - _startFrame, _inputs.Length);
+        var minSize = Math.Max(input.Tick - _startFrame, _inputs.Length);
         var growSize = _growSize > 0 ? minSize + _growSize : minSize * 2;
         Allocate(growSize);
       }
@@ -4966,9 +6027,18 @@ namespace Quantum {
       }
     }
 
+    /// <summary>
+    /// Unused.
+    /// </summary>
     public void AddRpc(int player, byte[] data, bool command) {
     }
 
+    /// <summary>
+    /// Reads a rpc from the input provider.
+    /// </summary>
+    /// <param name="frame">Frame</param>
+    /// <param name="player">Player</param>
+    /// <returns>The rpc and a bool that is true when the rpc is a command</returns>
     public QTuple<byte[], bool> GetRpc(int frame, int player) {
       if (frame < MaxFrame) {
         return QTuple.Create(
@@ -4979,6 +6049,12 @@ namespace Quantum {
       return default;
     }
 
+    /// <summary>
+    /// Returns input for a given frame and player.
+    /// </summary>
+    /// <param name="frame">Requested frame</param>
+    /// <param name="player">Requested player</param>
+    /// <returns>Input object for that player and frame</returns>
     public DeterministicFrameInputTemp GetInput(int frame, int player) {
       if (frame < MaxFrame) {
         var input = _inputs[ToIndex(frame)].Inputs[player];
@@ -5011,13 +6087,21 @@ namespace Quantum {
     }
   }
 
+  /// <summary>
+  /// Input provider extension methods.
+  /// </summary>
   public static class InputProviderExtensions {
+    /// <summary>
+    /// Copy and clone an input data object.
+    /// </summary>
+    /// <param name="input">Destination input</param>
+    /// <param name="otherInput">Source input</param>
     public static void CopyFrom(this DeterministicTickInput input, DeterministicTickInput otherInput) {
-      input.Sent        = otherInput.Sent;
-      input.Tick        = otherInput.Tick;
+      input.Sent = otherInput.Sent;
+      input.Tick = otherInput.Tick;
       input.PlayerIndex = otherInput.PlayerIndex;
-      input.DataLength  = otherInput.DataLength;
-      input.Flags       = otherInput.Flags;
+      input.DataLength = otherInput.DataLength;
+      input.Flags = otherInput.Flags;
 
       if (otherInput.DataArray != null) {
         input.DataArray = new byte[otherInput.DataArray.Length];
@@ -5030,26 +6114,37 @@ namespace Quantum {
       }
     }
 
+    /// <summary>
+    /// Clear an input data object.
+    /// </summary>
+    /// <param name="input">Input to clear</param>
     public static void Clear(this DeterministicTickInput input) {
-      input.Tick        = default;
+      input.Tick = default;
       input.PlayerIndex = default;
-      input.DataArray   = default;
-      input.DataLength  = default;
-      input.Flags       = default;
-      input.Rpc         = default;
+      input.DataArray = default;
+      input.DataLength = default;
+      input.Flags = default;
+      input.Rpc = default;
     }
 
-
-
+    /// <summary>
+    /// Set the content of a <see cref="DeterministicTickInput"/> from a <see cref="DeterministicFrameInputTemp"/>.
+    /// </summary>
+    /// <param name="input">Destination input</param>
+    /// <param name="temp">Source input</param>
     public static void Set(this DeterministicTickInput input, DeterministicFrameInputTemp temp) {
-      input.Tick        = temp.Frame;
+      input.Tick = temp.Frame;
       input.PlayerIndex = temp.Player;
-      input.DataArray   = temp.CloneData();
-      input.DataLength  = temp.DataLength;
-      input.Flags       = temp.Flags;
-      input.Rpc         = temp.Rpc;
+      input.DataArray = temp.CloneData();
+      input.DataLength = temp.DataLength;
+      input.Flags = temp.Flags;
+      input.Rpc = temp.Rpc;
     }
 
+    /// <summary>
+    /// Clear this input set.
+    /// </summary>
+    /// <param name="set">Input set</param>
     public static void Clear(this DeterministicTickInputSet set) {
       set.Tick = default;
 
@@ -5062,6 +6157,11 @@ namespace Quantum {
       }
     }
 
+    /// <summary>
+    /// Return true if the input set has valid input for each player.
+    /// </summary>
+    /// <param name="set">Input set</param>
+    /// <returns>True if the set is complete</returns>
     public static bool IsComplete(this DeterministicTickInputSet set) {
       for (int i = 0; i < set.Inputs.Length; i++) {
         if (set.Inputs[i].Tick == 0) {
@@ -5072,6 +6172,11 @@ namespace Quantum {
       return true;
     }
 
+    /// <summary>
+    /// Return true if this set is completed and sent.
+    /// </summary>
+    /// <param name="set">Input set to check</param>
+    /// <returns>True if all inputs in this set are valid and have been sent</returns>
     public static bool IsFinished(this DeterministicTickInputSet set) {
       for (int i = 0; i < set.Inputs.Length; i++) {
         if (set.Inputs[i].Tick == 0 ||
@@ -5124,12 +6229,12 @@ namespace Quantum {
 
 #region Assets/Photon/Quantum/Simulation/Replay/QuantumJsonFriendlyDataBlob.cs
 
-﻿namespace Quantum {
+namespace Quantum {
   using Photon.Deterministic;
   using System;
 
   /// <summary>
-  /// Wrapper around saving binary data in Json to work around the issue that Unity Json tools serialize byte array only verbose.
+  /// Wrapper around storing binary data in JSON to work around the problem that Unity JSON tools only serialize byte arrays verbosely.
   /// </summary>
   [Serializable]
   public class QuantumJsonFriendlyDataBlob {
@@ -5147,7 +6252,7 @@ namespace Quantum {
     public bool IsCompressed;
 
     /// <summary>
-    /// Used to customize encoding of this class in interal API.
+    /// Used to customize encoding of this class in internal API.
     /// </summary>
     /// <param name="data">Data to encode</param>
     /// <returns>New instance with encoded data</returns>
@@ -5212,9 +6317,9 @@ namespace Quantum {
 #endif
 
   /// <summary>
-  /// A class that holds all relevant data to run a Quantum replay that can be saved and loaded in JSON.
-  /// A replay can contain an AssetDatabase for convenience during development which should be omitted when using replay inside a production environment where replay sizes are a concern.
-  /// A replay can contain checksums that are verified when running the replay which is also a development feature.
+  /// A class that holds all relevant data to run a Quantum replay and can serialized in JSON.
+  /// A replay may contain an asset db for convenience, that should be omitted in production environments where files sizes are a concern.
+  /// A replay may contain recorded checksums, that can be verified during runtime as a development feature.
   /// </summary>
   [Serializable]
   public class QuantumReplayFile {
@@ -5247,15 +6352,15 @@ namespace Quantum {
 #endif
     public int InitialTick;
     /// <summary>
-    /// Optional frame data to start the replay with. This is used for savegames for example.
+    /// Optional frame data to start the replay with. This is used for save games for example.
     /// </summary>
     public byte[] InitialFrameData;
     /// <summary>
-    /// Optional checksums. Omit this for replays in production enviroments.
+    /// Optional checksums. Omit this for replays in production environments.
     /// </summary>
     public ChecksumFile Checksums;
     /// <summary>
-    /// Optional serialized asset database. Omit this for replays in production enviroments.
+    /// Optional serialized asset database. Omit this for replays in production environments.
     /// Use AssetSerializer.SerializeAssets(stream, ResourceManager.LoadAllAssets().ToArray()
     /// </summary>
     public QuantumJsonFriendlyDataBlob AssetDatabaseData;
@@ -5263,7 +6368,7 @@ namespace Quantum {
     /// <summary>
     /// Helper method to create an input provider based on the combination of the saved input history configurations.
     /// </summary>
-    /// <returns>Replay innput provider to play back the input. Use this in <see cref="SessionRunner.Arguments.ReplayProvider"/></returns>.
+    /// <returns>Replay input provider to play back the input. Use this in <see cref="SessionRunner.Arguments.ReplayProvider"/></returns>.
     public IDeterministicReplayProvider CreateInputProvider() {
       if (InputHistoryLegacy?.Length > 0) {
         return new InputProvider(InputHistoryLegacy);
@@ -5285,41 +6390,60 @@ namespace Quantum {
 
   #region Legacy 
 
+  /// <summary>
+  /// Obsolete class, use <see cref="QuantumReplayFile"/> instead.
+  /// </summary>
   [Obsolete("Use QuantumReplayFile")]
   public class ReplayFile : QuantumReplayFile {
+    /// <summary>
+    /// Obsolete
+    /// </summary>
     [Obsolete("use InputHistoryLegacy instead")]
     public DeterministicTickInputSet[] InputHistory {
       get => InputHistoryLegacy;
       set => InputHistoryLegacy = value;
     }
-
+    /// <summary>
+    /// Obsolete, use InputHistoryDeltaCompressed instead
+    /// </summary>
     [Obsolete("Use InputHistoryDeltaCompressed instead")]
     public byte[] InputHistoryRaw {
       get => InputHistoryDeltaCompressed.Decode();
-      set => InputHistoryDeltaCompressed = QuantumJsonFriendlyDataBlob.Encode(value, isCompressed: true, asBase64String: true); 
+      set => InputHistoryDeltaCompressed = QuantumJsonFriendlyDataBlob.Encode(value, isCompressed: true, asBase64String: true);
     }
-
+    /// <summary>
+    /// Obsolete, use InitialFrameData instead
+    /// </summary>
     [Obsolete("Use InitialFrameData")]
     public byte[] Frame {
       get => InitialFrameData;
       set => InitialFrameData = value;
     }
-
+    /// <summary>
+    /// Obsolete, use InitialTick instead
+    /// </summary>
     [Obsolete("Use InitialTick")]
     public int InitialFrame {
       get => InitialTick;
       set => InitialTick = value;
     }
-
-    [Obsolete("Use RuntimeConfig.Binary, serialization of RuntimeConfig requires the AssetSerializer: use AssetSerializer.ConfigToByteArray(RuntimeConfig, compress: true)")]
+    /// <summary>
+    /// Obsolete, use RuntimeConfigData.Binary instead
+    /// </summary>
+    [Obsolete("Use RuntimeConfigData.Binary instead")]
     public RuntimeConfig RuntimeConfig => null;
+    /// <summary>
+    /// Obsolete, use RuntimeConfigData.Binary instead
+    /// </summary>
 
-    [Obsolete("RuntimeConfig.Binary instead")]
+    [Obsolete("Use RuntimeConfigData.Binary instead")]
     public byte[] RuntimeConfigBinary {
       get => RuntimeConfigData?.Decode();
       set => RuntimeConfigData = QuantumJsonFriendlyDataBlob.Encode(value, isCompressed: false, asBase64String: true);
     }
-
+    /// <summary>
+    /// Obsolete, use AssetDatabaseData instead
+    /// </summary>
     [Obsolete("Use AssetDatabaseData instead")]
     public byte[] AssetDatabase {
       get => AssetDatabaseData?.Decode();
@@ -5340,15 +6464,29 @@ namespace Quantum {
   using System;
   using Photon.Deterministic;
 
+  /// <summary>
+  /// This input provider can store a certain amount of input sets in a ring buffer.
+  /// </summary>
   public class RingBufferInputProvider : IDeterministicReplayProvider {
     private readonly DeterministicTickInputSet[] _inputs;
 
     private readonly int _capacity;
     private int _startFrame;
 
-    public RingBufferInputProvider(DeterministicSessionConfig sessionConfig, int capacity = 256) : this(sessionConfig.PlayerCount, sessionConfig.RollbackWindow, capacity) {
+    /// <summary>
+    /// Create a ring buffer input provider.
+    /// </summary>
+    /// <param name="sessionConfig">Session config</param>
+    /// <param name="capacity">Total capacity</param>
+    public RingBufferInputProvider(DeterministicSessionConfig sessionConfig, int capacity = 256) : 
+      this(sessionConfig.PlayerCount, sessionConfig.RollbackWindow, capacity) {
     }
 
+    /// <summary>
+    /// Returns true if for the given frame input is available.
+    /// </summary>
+    /// <param name="frame">Requested frame</param>
+    /// <returns>True when there is input for the requested frame</returns>
     public bool CanSimulate(int frame) {
       if (frame < _startFrame) {
         return false;
@@ -5359,6 +6497,10 @@ namespace Quantum {
       return _inputs[index].Tick == frame && _inputs[index].IsComplete();
     }
 
+    /// <summary>
+    /// Create a ring buffer input provider from a list of input sets.
+    /// </summary>
+    /// <param name="inputList">Input sets</param>
     public RingBufferInputProvider(DeterministicTickInputSet[] inputList) {
       _startFrame = inputList.Length == 0 ? 0 : inputList[0].Tick;
 
@@ -5373,6 +6515,12 @@ namespace Quantum {
       }
     }
 
+    /// <summary>
+    /// Create a ring buffer input provider.
+    /// </summary>
+    /// <param name="playerCount">Max player count</param>
+    /// <param name="startFrame">Start frame</param>
+    /// <param name="capacity">Ring buffer capacity</param>
     public RingBufferInputProvider(int playerCount, int startFrame, int capacity) {
       _startFrame  = startFrame;
 
@@ -5388,6 +6536,10 @@ namespace Quantum {
       }
     }
 
+    /// <summary>
+    /// Clear all input sets.
+    /// </summary>
+    /// <param name="startFrame">New start frame</param>
     public void Clear(int startFrame) {
       _startFrame = startFrame;
 
@@ -5396,6 +6548,11 @@ namespace Quantum {
       }
     }
 
+    /// <summary>
+    /// The callback is used to record inputs.
+    /// </summary>
+    /// <param name="game">Quantum game</param>
+    /// <param name="input">The confirmed input</param>
     public void OnInputConfirmed(QuantumGame game, DeterministicFrameInputTemp input) {
       if (TryGetInputSetIndex(input.Frame, out var index) == false) {
         return;
@@ -5404,6 +6561,11 @@ namespace Quantum {
       _inputs[index].Inputs[input.Player].Set(input);
     }
 
+    /// <summary>
+    /// Inject input into the buffer.
+    /// </summary>
+    /// <param name="input">Input to inject</param>
+    /// <param name="localReplay">If set to true the sent flag will be set</param>
     public void InjectInput(DeterministicTickInput input, bool localReplay) {
       if (TryGetInputSetIndex(input.Tick, out var index) == false) {
         return;
@@ -5416,9 +6578,18 @@ namespace Quantum {
       }
     }
 
+    /// <summary>
+    /// Unused
+    /// </summary>
     public void AddRpc(int player, byte[] data, bool command) {
     }
 
+    /// <summary>
+    /// Read the rpc from the input.
+    /// </summary>
+    /// <param name="frame">Frame</param>
+    /// <param name="player">Player</param>
+    /// <returns>Rpc data</returns>
     public QTuple<byte[], bool> GetRpc(int frame, int player) {
       var index = ToIndex(frame);
 
@@ -5431,6 +6602,12 @@ namespace Quantum {
       return QTuple.Create(playerInput.Rpc, (playerInput.Flags & DeterministicInputFlags.Command) == DeterministicInputFlags.Command);
     }
 
+    /// <summary>
+    /// Read the input object.
+    /// </summary>
+    /// <param name="frame">Frame</param>
+    /// <param name="player">Player</param>
+    /// <returns>Input object</returns>
     public DeterministicFrameInputTemp GetInput(int frame, int player) {
       var index = ToIndex(frame);
 
@@ -5480,47 +6657,95 @@ namespace Quantum {
   using System;
   using System.IO;
 
+  /// <summary>
+  /// The stream replay input provider is used to play back input from a stream.
+  /// </summary>
   public class StreamReplayInputProvider : IDeterministicStreamReplayInputProvider {
     private int _maxFrame;
     private Stream _inputStream;
     private byte[] _lengthReadBuffer = new byte[4];
 
+    /// <summary>
+    /// The max frame that the stream has input for.
+    /// </summary>
     public int MaxFrame => _maxFrame;
 
+    /// <summary>
+    /// Create a stream replay input provider.
+    /// </summary>
+    /// <param name="inputStream">Stream to read from</param>
+    /// <param name="maxFrame">Max frame that input is available for</param>
     public StreamReplayInputProvider(Stream inputStream, int maxFrame) {
       _inputStream = inputStream;
       _maxFrame = maxFrame;
     }
 
+    /// <summary>
+    /// <inheritdoc/>
+    /// </summary>
+    public void Reset() {
+      _inputStream.SeekOrThrow(0, SeekOrigin.Begin);
+    }
+
+    /// <summary>
+    /// Is all input for this frame available.
+    /// </summary>
+    /// <param name="frame">Frame number</param>
+    /// <returns>True if all input is available and the simulation can progress</returns>
     public bool CanSimulate(int frame) {
       return frame <= _maxFrame;
     }
 
+    /// <summary>
+    /// Request input for a certain frame.
+    /// </summary>
+    /// <param name="frame">The frame for the requested input</param>
+    /// <returns>The size of the input to be read</returns>
     public int BeginReadFrame(int frame) {
       var bytesRead = _inputStream.Read(_lengthReadBuffer, 0, 4);
       Assert.Always(bytesRead == 4, bytesRead);
       return BitConverter.ToInt32(_lengthReadBuffer, 0);
     }
 
+    /// <summary>
+    /// Read the input data for the frame.
+    /// </summary>
+    /// <param name="frame">The frame to read the input for</param>
+    /// <param name="length">The input length requested in <see cref="BeginReadFrame(int)"/></param>
+    /// <param name="data">The array to copy input data to</param>
     public void CompleteReadFrame(int frame, int length, ref byte[] data) {
       var bytesRead = _inputStream.Read(data, 0, length);
       Assert.Always(bytesRead == length, bytesRead);
     }
 
+    /// <summary>
+    /// Unused.
+    /// </summary>
     public DeterministicFrameInputTemp GetInput(int frame, int player) {
       // unused
       return new DeterministicFrameInputTemp();
     }
 
+    /// <summary>
+    /// Unused.
+    /// </summary>
     public void AddRpc(int player, byte[] data, bool command) {
       // unused
     }
 
+    /// <summary>
+    /// Unused.
+    /// </summary>
     public QTuple<byte[], bool> GetRpc(int frame, int player) {
       // unused
       return new QTuple<byte[], bool>();
     }
 
+    /// <summary>
+    /// Skip to a selected frame in the stream.
+    /// </summary>
+    /// <param name="stream">Stream</param>
+    /// <param name="frame">Frame to fast forward to</param>
     public static void ForwardToFrame(Stream stream, int frame) {
       // Read from the recorded frame until we find the desired start frame.
       while (true) {
@@ -5551,24 +6776,52 @@ namespace Quantum {
 
   /// <summary>
   /// Platform dependent information and factory methods for the <see cref="SessionRunner"/>.
-  /// This factory is created to be used on the Quantum server plugin.
+  /// This implementation of the <see cref="IRunnerFactory"/> is not unused in Unity but in 
+  /// standalone Quantum applications and on the Quantum server plugin.
   /// </summary>
   public class DotNetRunnerFactory : IRunnerFactory {
-    public static Boolean _isInitialized = false;
-    public static readonly Object _lock = new Object();
+    static Boolean _isInitialized = false;
+    static readonly Object _lock = new Object();
 
+    /// <summary>
+    /// Gather the platform information.
+    /// </summary>
     public virtual DeterministicPlatformInfo CreatePlaformInfo => CreatePlatformInfo();
-
+    /// <summary>
+    /// Create a Quantum task factory.
+    /// </summary>
     public virtual TaskFactory CreateTaskFactory => null;
-    
+    /// <summary>
+    /// The action to when an update to the AssetDB is required. Not required.
+    /// </summary>
     public virtual Action UpdateDB => null;
-
+    /// <summary>
+    /// Instantiate the <see cref="QuantumGame"/>.
+    /// </summary>
+    /// <param name="startParameters">Start parameters</param>
+    /// <returns>Instance of IDeterministicGame</returns>
     public virtual IDeterministicGame CreateGame(QuantumGameStartParameters startParameters) => new QuantumGame(startParameters);
-
+    /// <summary>
+    /// The callback can be used to create and attach local profiler before the Quantum simulation has been started.
+    /// No profilers are created.
+    /// </summary>
+    /// <param name="clientId">Quantum client id</param>
+    /// <param name="deterministicConfig">Session config</param>
+    /// <param name="platformInfo">Platform info</param>
+    /// <param name="game">Game</param>
     public virtual void CreateProfiler(string clientId, DeterministicSessionConfig deterministicConfig, DeterministicPlatformInfo platformInfo, IDeterministicGame game) { }
-
+    /// <summary>
+    /// Instantiate a <see cref="SessionRunner"/>.
+    /// </summary>
+    /// <param name="arguments">Session arguments</param>
+    /// <returns>A session runner</returns>
     public virtual SessionRunner CreateRunner(SessionRunner.Arguments arguments) => new SessionRunner();
 
+    /// <summary>
+    /// Static method to create platform info.
+    /// Initializes statics <see cref="Native.Utils"/> and <see cref="MemoryLayoutVerifier.Platform"/>.
+    /// </summary>
+    /// <returns>Platform information data</returns>
     public static DeterministicPlatformInfo CreatePlatformInfo() {
       Init();
 
@@ -5649,18 +6902,23 @@ namespace Quantum {
   /// This was formerly part of the Quantum Server SDK.
   /// </summary>
   public class DotNetSessionRunner : IDeterministicSessionRunner {
-    static IResourceManager _resourceManager;
+    static ResourceManagerStatic _sharedResourceManager;
     static Object _lock = new Object();
-    IAssetSerializer _assetSerializer;
+    CallbackDispatcher _callbackDispatcher;
+    EventDispatcher _eventDispatcher;
     SessionRunner _runner;
+    IDisposable _eventSubscriptionGameResult;
 
     /// <summary>
     /// Get and set the AssetSerializer directly after <see cref="IDeterministicSessionRunner"/> creation, until it is possible to pass it internally.
     /// </summary>
-    public IAssetSerializer AssetSerializer {
-      get { return _assetSerializer; }
-      set { _assetSerializer = value; }
-    }
+    public IAssetSerializer AssetSerializer { get; set; }
+
+    /// <summary>
+    /// Assign a custom resource manager which will use the cached static resource manager as <see cref="ResourceManagerStatic.FallbackResourceManager"/>.
+    /// Must be set right after creation.
+    /// </summary>
+    public ResourceManagerStatic CustomResourceManager { get; set; }
 
     /// <summary>
     /// Grants access to the Quantum session runner.
@@ -5668,12 +6926,27 @@ namespace Quantum {
     public SessionRunner Runner => _runner;
 
     /// <summary>
-    /// Initialized the server simulation. It initilizes static classes like FPLut, Native.Utils and instantiates a static resource manager that is shared over multiple server simulations.
+    /// Access Quantum events.
+    /// </summary>
+    public object EventDispatcher => _eventDispatcher;
+
+    /// <summary>
+    /// Access Quantum callbacks.
+    /// </summary>
+    public object CallbackDispatcher => _callbackDispatcher;
+
+    /// <summary>
+    /// Callback raised on game result events from the simulation.
+    /// </summary>
+    public Action<byte[]> OnGameResult { get; set; }
+
+    /// <summary>
+    /// Initialized the server simulation. It initializes static classes like FPLut, Native.Utils and instantiates a static resource manager that is shared over multiple server simulations.
     /// This method throws exceptions on errors.
     /// </summary>
     public void Init(DeterministicSessionRunnerInitArguments args) {
-      _assetSerializer ??= (IAssetSerializer)args.AssetSerializer;
-      Assert.Always(_assetSerializer != null, "AssetSerializer required");
+      AssetSerializer ??= (IAssetSerializer)args.AssetSerializer;
+      Assert.Always(AssetSerializer != null, "AssetSerializer required");
 
       lock (_lock) {
         if (!FPLut.IsLoaded) {
@@ -5685,7 +6958,7 @@ namespace Quantum {
         }
 
         // TODO: If resource manager changes during runtime there should be an option to pass an instance here or to to create individual managers for each simulation and make it accessible.
-        if (_resourceManager == null) {
+        if (_sharedResourceManager == null) {
           byte[] assetDBData = null;
 
           // Trying to load the asset db file from disk
@@ -5708,10 +6981,14 @@ namespace Quantum {
           Assert.Always(assetDBData != null, $"No asset database found for path {args.AssetDBPath} or {args.EmbeddedAssetDBName}");
 
           using (var stream = new MemoryStream(assetDBData)) {
-            var assets = _assetSerializer.DeserializeAssets(stream);
-            _resourceManager = new ResourceManagerStatic(assets, DotNetRunnerFactory.CreateNativeAllocator());
+            var assets = AssetSerializer.DeserializeAssets(stream);
+            _sharedResourceManager = new ResourceManagerStatic(assets, DotNetRunnerFactory.CreateNativeAllocator());
           }
         }
+      }
+
+      if (CustomResourceManager != null) {
+        CustomResourceManager.FallbackResourceManager = _sharedResourceManager;
       }
     }
 
@@ -5719,6 +6996,13 @@ namespace Quantum {
     /// Disposes the Quantum runner.
     /// </summary>
     public void Shutdown() {
+      _eventSubscriptionGameResult?.Dispose();
+      _eventSubscriptionGameResult = null;
+      _eventDispatcher?.Clear();
+      _eventDispatcher = null;
+      _callbackDispatcher?.Clear();
+      _callbackDispatcher = null;
+
       if (_runner == null) {
         return;
       }
@@ -5739,17 +7023,37 @@ namespace Quantum {
       // no need to allocate an extra frame for interpolation on the server sim (saves memory and frame copies)
       gameFlags |= QuantumGameFlags.DisableInterpolatableStates;
 
+      _callbackDispatcher = new CallbackDispatcher();
+      _eventDispatcher = new EventDispatcher();
+
       _runner = SessionRunner.Start(new SessionRunner.Arguments {
         RunnerFactory = new DotNetRunnerFactory(),
         TaskRunner = new InactiveTaskRunner(), // force the server simulation to run in single thread (scales better)
-        AssetSerializer = _assetSerializer,
-        ResourceManager = _resourceManager,
+        AssetSerializer = AssetSerializer,
+        ResourceManager = CustomResourceManager ?? _sharedResourceManager,
+        CallbackDispatcher = _callbackDispatcher,
+        EventDispatcher = _eventDispatcher,
         ReplayProvider = args.InputProvider,
-        RuntimeConfig = _assetSerializer.ConfigFromByteArray<RuntimeConfig>(args.RuntimeConfig, compressed: true),
+        RuntimeConfig = AssetSerializer.ConfigFromByteArray<RuntimeConfig>(args.RuntimeConfig, compressed: true),
         SessionConfig = args.SessionConfig,
         GameMode = DeterministicGameMode.Replay,
         GameFlags = gameFlags,
       });
+
+      _eventSubscriptionGameResult = _eventDispatcher.SubscribeManual((EventGameResult e) => OnGameResultEvent(e));
+    }
+
+    private void OnGameResultEvent(EventGameResult e) {
+      if (_runner == null) {
+        return;
+      }
+
+      if (OnGameResult == null) {
+        return;
+      }
+
+      var bytes = AssetSerializer.ResultToByteArray(e.GameResult, true);
+      OnGameResult.Invoke(bytes);
     }
 
     /// <summary>
@@ -5805,12 +7109,43 @@ namespace Quantum {
   using System;
   using System.Threading.Tasks;
 
+  /// <summary>
+  /// The interface for the runner factory. It creates platform specific objects to run the Quantum simulation.
+  /// </summary>
   public interface IRunnerFactory {
+    /// <summary>
+    /// Gather the platform information.
+    /// There is a spelling mistake in the method name, but it's considered a bigger annoyance to change the interface.
+    /// </summary>
     DeterministicPlatformInfo CreatePlaformInfo { get; }
+    /// <summary>
+    /// Create a Quantum task factory.
+    /// </summary>
     TaskFactory CreateTaskFactory { get; }
+    /// <summary>
+    /// The callback can be used to create and attach local profiler before the Quantum simulation has been started.
+    /// </summary>
+    /// <param name="clientId">Quantum client id</param>
+    /// <param name="deterministicConfig">Session config</param>
+    /// <param name="platformInfo">Platform info</param>
+    /// <param name="game">Game</param>
     void CreateProfiler(string clientId, DeterministicSessionConfig deterministicConfig, DeterministicPlatformInfo platformInfo, IDeterministicGame game);
+    /// <summary>
+    /// Instantiate an implementation of the <see cref="IDeterministicGame"/>. 
+    /// </summary>
+    /// <param name="startParameters">Start parameters</param>
+    /// <returns>Instance of IDeterministicGame</returns>
     IDeterministicGame CreateGame(QuantumGameStartParameters startParameters);
+    /// <summary>
+    /// The action to when an update to the AssetDB is required.
+    /// </summary>
     Action UpdateDB { get; }
+    /// <summary>
+    /// Create an object that the SessionRunner is running on.
+    /// For Unity it is wrapped in a MonoBehaviour.
+    /// </summary>
+    /// <param name="arguments">Session arguments</param>
+    /// <returns>A session runner</returns>
     SessionRunner CreateRunner(SessionRunner.Arguments arguments);
   }
 }
@@ -5836,7 +7171,7 @@ namespace Quantum {
       /// </summary>
       public const float DefaultStartGameTimeoutInSeconds = 10.0f;
       /// <summary>
-      /// The Quantum ClientId is a secret between the client and the server and is used when reconnecting into a running simulation to preseve the player index.
+      /// The Quantum ClientId is a secret between the client and the server and is used when reconnecting into a running simulation to preserve the player index.
       /// </summary>
       public string ClientId;
       /// <summary>
@@ -5848,7 +7183,7 @@ namespace Quantum {
       /// </summary>
       public DeterministicSessionConfig SessionConfig;
       /// <summary>
-      /// The replay provider injects recorded inputs and rpcs into the game which is required to run the game as a replay. InputProvider is an implementation of the replay provider. See useages of QuantumGame.RecordedInputs and WuantumRunnerLocalReplay.InputProvider.
+      /// The replay provider injects recorded inputs and rpcs into the game which is required to run the game as a replay. InputProvider is an implementation of the replay provider. See usages of QuantumGame.RecordedInputs and QuantumRunnerLocalReplay.InputProvider.
       /// </summary>
       public IDeterministicReplayProvider ReplayProvider;
       /// <summary>
@@ -5859,7 +7194,7 @@ namespace Quantum {
       /// </summary>
       public DeterministicGameMode GameMode;
       /// <summary>
-      /// The initial tick to start the simulation from as set in FrameData (only set this when FrameData is set as well). The initial frame is also encoded in the data, but required deserilization first.
+      /// The initial tick to start the simulation from as set in FrameData (only set this when FrameData is set as well). The initial frame is also encoded in the data, but required deserialization first.
       /// </summary>
       public Int32 InitialTick;
       /// <summary>
@@ -5884,7 +7219,7 @@ namespace Quantum {
       /// </summary>
       public Int32 PlayerCount;
       /// <summary>
-      /// If set it defines the timeout in seconds to wait for StartGame() to commence the online game. This includes for example sending configrations and waiting for a snapshot.
+      /// If set it defines the timeout in seconds to wait for StartGame() to commence the online game. This includes for example sending configurations and waiting for a snapshot.
       /// If not set the default timeout is used defined by <see cref="DefaultStartGameTimeoutInSeconds"/>.
       /// This value is not related to <see cref="DeterministicSessionConfig.SessionStartTimeout"/>, but it's affected by it. The SessionStartTimeout should not be larger than this value.
       /// Use WaitForGameStart() to manually wait for the start. Be sure to Shutdown() the runner in case of exceptions.
@@ -5933,7 +7268,7 @@ namespace Quantum {
 
       /// <summary>
       /// Optionally override the resource manager for example from deserialized Quantum assets (as showcased in QuantumRunnerLocalReplay).
-      /// Will set <see cref="GameParameters.ResourceManager"/>
+      /// Will set <see cref="QuantumGameStartParameters.ResourceManager"/>
       /// </summary>
       public IResourceManager ResourceManager {
         get { return GameParameters.ResourceManager; }
@@ -5941,15 +7276,15 @@ namespace Quantum {
       }
 
       /// <summary>
-      /// Will set <see cref="GameParameters.AssetSerializer "/>
+      /// Will set <see cref="QuantumGameStartParameters.AssetSerializer "/>
       /// </summary>
       public IAssetSerializer AssetSerializer {
         get { return GameParameters.AssetSerializer; }
         set { GameParameters.AssetSerializer = value; }
       }
-      
+
       /// <summary>
-      /// Will set <see cref="GameParameters.CallbackDispatcher"/>
+      /// Will set <see cref="QuantumGameStartParameters.CallbackDispatcher"/>
       /// </summary>
       public ICallbackDispatcher CallbackDispatcher {
         get { return GameParameters.CallbackDispatcher; }
@@ -5957,7 +7292,7 @@ namespace Quantum {
       }
 
       /// <summary>
-      /// Will set <see cref="GameParameters.EventDispatcher"/>
+      /// Will set <see cref="QuantumGameStartParameters.EventDispatcher"/>
       /// </summary>
       public IEventDispatcher EventDispatcher {
         get { return GameParameters.EventDispatcher; }
@@ -6043,9 +7378,9 @@ namespace Quantum {
   /// <summary>
   /// The SessionRunner helps to start, run and shutdown a Quantum simulation.
   /// It should never be reused for multiple simulations of multiple runs of the same game session. Always recrate the runner.
-  /// It has an extensive list of starting <see cref="Arguments"/> that make it startable for a variaty of use cases: Local, Multiplayer, Replay, Server etc
+  /// It has an extensive list of starting <see cref="Arguments"/> that make it start-able for a variety of use cases: Local, Multiplayer, Replay, Server etc
   /// It extracts platform dependent code into the <see cref="IRunnerFactory"/> parameter.
-  /// It offers asynchronous methods to start and stop the runner but although it uses the TPL syntax for convenience it is not considered to be run in a multi-threaded enviroment. 
+  /// It offers asynchronous methods to start and stop the runner but although it uses the TPL syntax for convenience it is not considered to be run in a multi-threaded environment. 
   /// Use the non-async versions of the methods or use a <see cref="ConcurrentExclusiveSchedulerPair.ExclusiveScheduler"/> for unit tests and console applications.
   /// Also never use the async methods from the Quantum server plugin, parallelization is done by the Photon-Server.
   /// This class is delivered in source code to enable developers to create custom runner code.
@@ -6080,7 +7415,7 @@ namespace Quantum {
     /// </summary>
     public bool IsRunning => State == SessionState.Running;
     /// <summary>
-    /// Access the comunicator object.
+    /// Access the communicator object.
     /// </summary>
     public ICommunicator Communicator { get; private set; }
     /// <summary>
@@ -6110,7 +7445,7 @@ namespace Quantum {
     }
 
     /// <summary>
-    /// Implements disposeable interface. Calls Shutdown internally. 
+    /// Implements disposable interface. Calls Shutdown internally. 
     /// This is also called from inside Session.Destroy() to signal shutdown by the simulation.
     /// </summary>
     public void Dispose() {
@@ -6136,7 +7471,7 @@ namespace Quantum {
     /// From Unity is would be a MonoBehaviour, on the plugin it would be from OnDeterministicUpdate() 
     /// and the spectator has an extra service task to tick this.
     /// </summary>
-    /// <param name="deltaTime">If null the internal stopclock is used to update, otherwise pass in the desired delte time to progress the simulation.</param>
+    /// <param name="deltaTime">If null the internal stopwatch is used to update, otherwise pass in the desired delta time to progress the simulation.</param>
     public void Service(double? deltaTime = null) {
       if (Session != null && State == SessionState.Starting) {
         // Waiting for a snapshot 
@@ -6283,7 +7618,7 @@ namespace Quantum {
 
     /// <summary>
     /// Shutdown the runner asynchronously. 
-    /// Can be called from a simualtion callback.
+    /// Can be called from a simulation callback.
     /// Will also wait for the connection to be properly disconnected.
     /// </summary>
     /// <param name="cause">Shutdown cause</param>
@@ -6323,7 +7658,7 @@ namespace Quantum {
       }
 
       // disconnect
-      // TODO: check if this could delay the shutdown unnecessaryly during connection hickups
+      // TODO: check if this could delay the shutdown unnecessarily during connection hick-ups
       if (Communicator != null) {
         result = result.ContinueWith(t => Communicator.OnDestroyAsync(), TaskFactory.Scheduler);
       }
@@ -6604,23 +7939,48 @@ namespace Quantum {
 namespace Quantum.Task {
   using System;
 
+  /// <summary>
+  /// A multi-threaded system to parallelize updating components.
+  /// <para>Only access to the component itself and <see cref="FrameThreadSafe"/> is safe.</para>
+  /// <para>Array task: similar to <see cref="SystemThreadedComponent{T}"/>, but, instead of slicing the component buffer in N slices of a fixed size each, 
+  /// the buffer is sliced in a fixed number of slices and the size of the slice depends on the size of the buffer, 
+  /// which must be known in Schedule time.</para>
+  /// <para>For more information request access to the online multi-threading documentation.</para>
+  /// </summary>
+  /// <typeparam name="T">Component type to update.</typeparam>
   public abstract unsafe class SystemArrayComponent<T> : SystemBase where T : unmanaged, IComponent {
     private TaskDelegateHandle _arrayTaskDelegateHandle;
 
     // internal max slices
     private const int MAX_SLICES_COUNT = 32;
 
+    /// <summary>
+    /// Override to specify the number of slices to use.
+    /// </summary>
     public virtual int SlicesCount => MAX_SLICES_COUNT / 2;
 
+    /// <summary>
+    /// Initializes the system and call the virtual <see cref="OnInitUser(Frame)"/> method.
+    /// </summary>
+    /// <param name="f">The referenced frame.</param>
     public sealed override void OnInit(Frame f) {
       f.Context.TaskContext.RegisterDelegate(TaskArrayComponent, GetType().Name + ".Update", ref _arrayTaskDelegateHandle);
       OnInitUser(f);
     }
 
+    /// <summary>
+    /// Override to initialize a custom system.
+    /// </summary>
+    /// <param name="f">The referenced frame.</param>
     protected virtual void OnInitUser(Frame f) {
-
     }
 
+    /// <summary>
+    /// Override to schedule extra tasks.
+    /// </summary>
+    /// <param name="f">The referenced frame.</param>
+    /// <param name="taskHandle">The initial task handle.</param>
+    /// <returns>The updated task graph.</returns>
     protected override TaskHandle Schedule(Frame f, TaskHandle taskHandle) {
       var slicesCount = Math.Max(1, Math.Min(SlicesCount, MAX_SLICES_COUNT));
       return f.Context.TaskContext.AddArrayTask(_arrayTaskDelegateHandle, null, f.ComponentCount<T>(includePendingRemoval: true), taskHandle, slicesCount);
@@ -6634,6 +7994,13 @@ namespace Quantum.Task {
       }
     }
 
+    /// <summary>
+    /// Override to add workload.
+    /// <para>Only access to the component itself and <see cref="FrameThreadSafe"/> is safe.</para>
+    /// </summary>
+    /// <param name="f">The thread-safe referenced frame.</param>
+    /// <param name="entity">The entity that the component belongs to, only read access is safe.</param>
+    /// <param name="component">The component to update.</param>
     public abstract void Update(FrameThreadSafe f, EntityRef entity, T* component);
   }
 }
@@ -6646,6 +8013,14 @@ namespace Quantum.Task {
 namespace Quantum.Task {
   using System;
 
+  /// <summary>
+  /// A multi-threaded system to parallelize updating components.
+  /// <para>Only access to the component itself and <see cref="FrameThreadSafe"/> is safe.</para>
+  /// <para>Array task: similar to <see cref="SystemArrayComponent{T}"/>, 
+  /// but the threads will iterate over a filtered component set defined by the filter struct T.</para>
+  /// <para>For more information request access to the online multi-threading documentation.</para>
+  /// </summary>
+  /// <typeparam name="T">Component type to update.</typeparam>
   public abstract unsafe class SystemArrayFilter<T> : SystemBase where T : unmanaged {
     private TaskDelegateHandle        _arrayTaskDelegateHandle;
     private ComponentFilterStructMeta _filterMeta;
@@ -6653,14 +8028,22 @@ namespace Quantum.Task {
     // internal max slices
     private const int MAX_SLICES_COUNT = 32;
 
+    /// <inheritdoc cref="SystemArrayComponent{T}.SlicesCount"/>
     public virtual int SlicesCount => MAX_SLICES_COUNT / 2;
-
+    /// <summary>
+    /// Override to specify if the filter should use culling.
+    /// </summary>
     public virtual bool UseCulling => true;
-
+    /// <summary>
+    /// A filter to exclude components from the iteration.
+    /// </summary>
     public virtual ComponentSet Without => default;
-
+    /// <summary>
+    /// A filter to include components from the iteration.
+    /// </summary>
     public virtual ComponentSet Any => default;
 
+    /// <inheritdoc cref="SystemArrayComponent{T}.OnInit(Frame)"/>
     public sealed override void OnInit(Frame f) {
       _filterMeta = ComponentFilterStructMeta.Create<T>();
       Assert.Check(_filterMeta.ComponentCount > 0, "Filter Struct '{0}' must have at least one component pointer.", typeof(T));
@@ -6669,10 +8052,11 @@ namespace Quantum.Task {
       OnInitUser(f);
     }
 
+    /// <inheritdoc cref="SystemArrayComponent{T}.OnInitUser(Frame)"/>
     protected virtual void OnInitUser(Frame f) {
-
     }
 
+    /// <inheritdoc cref="SystemArrayComponent{T}.Schedule(Frame, TaskHandle)"/>
     protected override TaskHandle Schedule(Frame f, TaskHandle taskHandle) {
       // figure out smallest block iterator
       var taskSize = f.ComponentCount(_filterMeta.ComponentTypes[0], includePendingRemoval: true);
@@ -6703,6 +8087,12 @@ namespace Quantum.Task {
       }
     }
 
+    /// <summary>
+    /// Override to add workload.
+    /// <para>Only access to the component itself and <see cref="FrameThreadSafe"/> is safe.</para>
+    /// </summary>
+    /// <param name="f">The thread-safe referenced frame.</param>
+    /// <param name="filter">The entity filter.</param>
     public abstract void Update(FrameThreadSafe f, ref T filter);
   }
 }
@@ -6717,12 +8107,19 @@ namespace Quantum {
   using System;
   using System.Collections.Generic;
 
+  /// <summary>
+  /// The Quantum system base class.
+  /// <para>Only advised for advanced uses only.</para>
+  /// </summary>
   public abstract partial class SystemBase {
     readonly String _scheduleSample;
     bool _startEnabled;
     Int32? _runtimeIndex;
     SystemBase _parentSystem;
 
+    /// <summary>
+    /// A unique index assigned to identify systems at runtime.
+    /// </summary>
     public Int32 RuntimeIndex {
       get {
         return (Int32)_runtimeIndex;
@@ -6736,6 +8133,9 @@ namespace Quantum {
       }
     }
 
+    /// <summary>
+    /// The parent system in the system hierarchy.
+    /// </summary>
     public SystemBase ParentSystem {
       get {
         return _parentSystem;
@@ -6745,12 +8145,18 @@ namespace Quantum {
       }
     }
 
+    /// <summary>
+    /// The enumerable child systems.
+    /// </summary>
     public virtual IEnumerable<SystemBase> ChildSystems {
       get {
         return new SystemBase[0];
       }
     }
 
+    /// <summary>
+    /// Creates the complete sub graph of child systems.
+    /// </summary>
     public IEnumerable<SystemBase> Hierarchy {
       get {
         yield return this;
@@ -6765,33 +8171,59 @@ namespace Quantum {
       }
     }
 
+    /// <summary>
+    /// Set to <see langword="true"/> when the simulation should start with this system enabled.
+    /// </summary>
     public virtual Boolean StartEnabled {
       get { return _startEnabled; }
       set { _startEnabled = value; }
     }
 
+    /// <summary>
+    /// Constructor.
+    /// </summary>
     public SystemBase() {
       _scheduleSample = GetType().Name + ".Schedule";
       _startEnabled = true;
     }
 
+    /// <summary>
+    /// Create a new instance and setting the sample name.
+    /// </summary>
+    /// <param name="scheduleSample">The name of the system to identify in the profiler.</param>
     public SystemBase(string scheduleSample) {
       _scheduleSample = scheduleSample;
       _startEnabled = true;
     }
 
+    /// <summary>
+    /// Is called when the system is initialized.
+    /// </summary>
+    /// <param name="f">The referenced frame.</param>
     public virtual void OnInit(Frame f) {
-      
     }
 
+    /// <summary>
+    /// Is called when the system was enabled for example after calling <see cref="Frame.SystemEnable{T}()"/> 
+    /// or during <see cref="QuantumGame.InitSystems(Photon.Deterministic.DeterministicFrame)"/>.
+    /// </summary>
+    /// <param name="f">The referenced frame.</param>
     public virtual void OnEnabled(Frame f) {
-      
     }
 
+    /// <summary>
+    /// Is called when the system was disabled for example after <see cref="Frame.SystemDisable(Type)"/>.
+    /// </summary>
+    /// <param name="f">The referenced frame.</param>
     public virtual void OnDisabled(Frame f) {
-      
     }
 
+    /// <summary>
+    /// Creates the task graph for the system.
+    /// </summary>
+    /// <param name="f">The referenced frame.</param>
+    /// <param name="taskHandle">The initial task handle.</param>
+    /// <returns>The system task graph.</returns>
     public TaskHandle OnSchedule(Frame f, TaskHandle taskHandle) {
 #if DEBUG
       var profiler = f.Context.ProfilerContext.GetProfilerForTaskThread(0);
@@ -6808,6 +8240,12 @@ namespace Quantum {
 #endif
     }
 
+    /// <summary>
+    /// Override to add tasks to this system.
+    /// </summary>
+    /// <param name="f">The referenced frame.</param>
+    /// <param name="taskHandle">The initial task handle.</param>
+    /// <returns>The system task graph.</returns>
     protected abstract TaskHandle Schedule(Frame f, TaskHandle taskHandle);
   }
 }
@@ -6822,13 +8260,22 @@ namespace Quantum {
   using System.Collections.Generic;
   using Quantum.Task;
 
+  /// <summary>
+  /// The base class for a hierarchy of systems.
+  /// </summary>
   public unsafe class SystemGroup : SystemBase {
     SystemBase[] _children;
 
+    /// <inheritdoc cref="SystemBase.ChildSystems"/>
     public sealed override IEnumerable<SystemBase> ChildSystems {
       get { return _children; }
     }
 
+    /// <summary>
+    /// Create a new system group.
+    /// </summary>
+    /// <param name="name">The name of the system.</param>
+    /// <param name="children">The child systems.</param>
     public SystemGroup(String name, params SystemBase[] children) : base(name + ".Schedule") {
       _children = children;
 
@@ -6837,6 +8284,12 @@ namespace Quantum {
       }
     }
 
+    /// <summary>
+    /// Add the child systems the the task hierarchy.
+    /// </summary>
+    /// <param name="f">The referenced frame.</param>
+    /// <param name="taskHandle">The initial task handle.</param>
+    /// <returns>The final task graph.</returns>
     protected sealed override TaskHandle Schedule(Frame f, TaskHandle taskHandle) {
       if (_children != null) {
         for (var i = 0; i < _children.Length; ++i) {
@@ -6853,6 +8306,7 @@ namespace Quantum {
       return taskHandle;
     }
 
+    /// <inheritdoc cref="SystemBase.OnEnabled(Frame)"/>
     public override void OnEnabled(Frame f) {
       base.OnEnabled(f);
 
@@ -6863,6 +8317,7 @@ namespace Quantum {
       }
     }
 
+    /// <inheritdoc cref="SystemBase.OnDisabled(Frame)"/>
     public override void OnDisabled(Frame f) {
       base.OnDisabled(f);
 
@@ -6885,18 +8340,35 @@ namespace Quantum {
   using Quantum.Core;
   using Quantum.Task;
 
+  /// <summary>
+  /// Most common Quantum system type. Implements a regular Update() with all the usual features.
+  /// <para>Always register new system types on the <see cref="SystemsConfig"/>.</para>
+  /// </summary>
   public abstract unsafe class SystemMainThread : SystemBase {
     readonly String _update;
     TaskDelegateHandle _updateHandle;
 
+    /// <summary>
+    /// Create a new system.
+    /// </summary>
     public SystemMainThread() {
       _update = GetType().Name + ".Update";
     }
 
+    /// <summary>
+    /// Create a new system with a custom name.
+    /// </summary>
+    /// <param name="name">The system name shows up in the task profiler for example.</param>
     public SystemMainThread(string name) {
       _update = name + ".Update";
     }
 
+    /// <summary>
+    /// Adds the basic update callback.
+    /// </summary>
+    /// <param name="f">The referenced frame.</param>
+    /// <param name="taskHandle">The initial task handle.</param>
+    /// <returns>The final task graph.</returns>
     protected TaskHandle ScheduleUpdate(Frame f, TaskHandle taskHandle) {
       if (_updateHandle.IsValid == false) {
         f.Context.TaskContext.RegisterDelegate(TaskCallback, _update, ref _updateHandle);
@@ -6905,6 +8377,12 @@ namespace Quantum {
       return f.Context.TaskContext.AddMainThreadTask(_updateHandle, null, taskHandle);
     }
 
+    /// <summary>
+    /// Override to add additional tasks.
+    /// </summary>
+    /// <param name="f">The referenced frame.</param>
+    /// <param name="taskHandle">The initial task handle.</param>
+    /// <returns>The final task graph.</returns>
     protected override TaskHandle Schedule(Frame f, TaskHandle taskHandle) {
       return ScheduleUpdate(f, taskHandle);
     }
@@ -6917,6 +8395,10 @@ namespace Quantum {
       }
     }
 
+    /// <summary>
+    /// Override to add workload.
+    /// </summary>
+    /// <param name="f">The current fame.</param>
     public abstract void Update(Frame f);
   }
 }
@@ -6929,21 +8411,53 @@ namespace Quantum {
 namespace Quantum {
   using System.Runtime.CompilerServices;
 
+  /// <summary>
+  /// This type of system uses a FilterStruct of type T to filter a set of entities based on it, 
+  /// loop through them and calls a method.
+  /// <para>The Any and Without virtual functions can be overwritten for more advanced filtering.</para>
+  /// <para>If more complex options are required, inherit from SystemMainThread and iterate through the filters manually.</para>
+  /// <para>Always register new system types on the <see cref="SystemsConfig"/>.</para>
+  /// </summary>
+  /// <example><code>
+  ///public unsafe class FooSystem : SystemMainThreadFilter{Foo.Filter} {
+  ///  public struct Filter {
+  ///    public EntityRef Entity;
+  ///    public Foo* FooComponent;
+  ///  }
+  ///  public override void Update(Frame f, ref Filter filter) {
+  ///    filter.FooComponent->Update(f, filter.Entity);
+  ///  }
+  ///}
+  /// </code></example>
+  /// <typeparam name="T">Filter type</typeparam>
   public abstract unsafe class SystemMainThreadFilter<T> : SystemMainThread where T : unmanaged {
+    /// <summary>
+    /// Override to change the if the filter should exclude culled entities.
+    /// </summary>
     public virtual bool UseCulling {
       get { return true; }
     }
 
+    /// <summary>
+    /// A filter to exclude components from the iteration.
+    /// </summary>
     public virtual ComponentSet Without {
       [MethodImpl(MethodImplOptions.AggressiveInlining)]
       get => default;
     }
     
+    /// <summary>
+    /// A filter to include components from the iteration.
+    /// </summary>
     public virtual ComponentSet Any {
       [MethodImpl(MethodImplOptions.AggressiveInlining)]
       get => default;
     }
 
+    /// <summary>
+    /// Internal update method, use <see cref="Update(Frame, ref T)"/> instead.
+    /// </summary>
+    /// <param name="f">The current frame.</param>
     public sealed override void Update(Frame f) {
       // grab iterator
       var it = f.Unsafe.FilterStruct<T>(Without, Any);
@@ -6959,6 +8473,11 @@ namespace Quantum {
       }
     }
 
+    /// <summary>
+    /// Override to add workload.
+    /// </summary>
+    /// <param name="f">The current frame.</param>
+    /// <param name="filter">The frame object.</param>
     public abstract void Update(Frame f, ref T filter);
   }
 }
@@ -6973,9 +8492,17 @@ namespace Quantum {
   using System;
   using System.Collections.Generic;
 
+  /// <summary>
+  /// A Quantum main thread system that has a system hierarchy.
+  /// </summary>
   public unsafe class SystemMainThreadGroup : SystemMainThread {
     SystemMainThread[] _children;
 
+    /// <summary>
+    /// Create a new system group.
+    /// </summary>
+    /// <param name="name">The system name.</param>
+    /// <param name="children">The system children.</param>
     public SystemMainThreadGroup(string name, params SystemMainThread[] children) : base(name + ".Schedule") {
       Assert.Check(name != null);
       Assert.Check(children != null);
@@ -6987,10 +8514,14 @@ namespace Quantum {
       }
     }
 
+    /// <summary>
+    /// Returns all child systems of this instance.
+    /// </summary>
     public sealed override IEnumerable<SystemBase> ChildSystems {
       get { return _children; }
     }
 
+    /// <inheritdoc cref="SystemMainThread.Schedule(Frame, TaskHandle)"/>
     protected override TaskHandle Schedule(Frame f, TaskHandle taskHandle) {
       if (_children != null) {
         for (var i = 0; i < _children.Length; ++i) {
@@ -7007,6 +8538,7 @@ namespace Quantum {
       return taskHandle;
     }
 
+    /// <inheritdoc cref="SystemBase.OnEnabled(Frame)"/>
     public override void OnEnabled(Frame f) {
       base.OnEnabled(f);
 
@@ -7017,6 +8549,7 @@ namespace Quantum {
       }
     }
 
+    /// <inheritdoc cref="SystemBase.OnDisabled(Frame)"/>
     public override void OnDisabled(Frame f) {
       base.OnDisabled(f);
 
@@ -7027,6 +8560,10 @@ namespace Quantum {
       }
     }
 
+    /// <summary>
+    /// Override to add the workload.
+    /// </summary>
+    /// <param name="f">The current frame.</param>
     public sealed override void Update(Frame f) {
     }
   }
@@ -7039,7 +8576,15 @@ namespace Quantum {
 
 namespace Quantum {
   using Quantum.Task;
+
+  /// <summary>
+  /// This type of system does not have an Update() function.
+  /// It is meant for systems that focus solely on implementing and receiving signals from other systems. 
+  /// By avoiding the Update loop, it helps you save some overhead.
+  /// </summary>
+  /// <para>Always register new system types on the <see cref="SystemsConfig"/>.</para>
   public class SystemSignalsOnly : SystemBase {
+    /// <inheritdoc cref="SystemBase.Schedule(Frame, TaskHandle)"/>/>
     protected sealed override TaskHandle Schedule(Frame f, TaskHandle taskHandle) {
       return taskHandle;
     }
@@ -7055,24 +8600,40 @@ namespace Quantum.Task {
   using System;
   using System.Threading;
 
+  /// <summary>
+  /// A multi-threaded system to parallelize updating components.
+  /// <para>Threaded task: the threads will iterate over a component buffer with a size that is not known at Schedule time.
+  /// Each thread will acquire a slice of a given (configurable) size until the end of the buffer is reached. 
+  /// While iterating over a slice, the thread will call the Update() method that can be implemented by the inheritor system, 
+  /// passing a FrameThreadSafe, the EntityRef and a T*.</para>
+  /// <para>Only access to the component itself and <see cref="FrameThreadSafe"/> is safe.</para>
+  /// <para>For more information request access to the online multi-threading documentation.</para>
+  /// </summary>
+  /// <typeparam name="T"></typeparam>
   public abstract unsafe class SystemThreadedComponent<T> : SystemBase where T : unmanaged, IComponent {
     private TaskDelegateHandle _threadedTaskDelegateHandle;
     private int                _sliceIndexer;
     private int                _sliceSize;
 
+    /// <summary>
+    /// The default slide size.
+    /// </summary>
     public const int DEFAULT_SLICE_SIZE = 16;
 
+    /// <inheritdoc cref="SystemArrayComponent{T}.SlicesCount"/>
     public virtual int SliceSize => DEFAULT_SLICE_SIZE;
 
+    /// <inheritdoc cref="SystemArrayComponent{T}.OnInit(Frame)"/>
     public sealed override void OnInit(Frame f) {
       f.Context.TaskContext.RegisterDelegate(TaskThreadedComponent, GetType().Name + ".Update", ref _threadedTaskDelegateHandle);
       OnInitUser(f);
     }
 
+    /// <inheritdoc cref="SystemArrayComponent{T}.OnInitUser(Frame)"/>
     protected virtual void OnInitUser(Frame f) {
-
     }
 
+    /// <inheritdoc cref="SystemArrayComponent{T}.Schedule(Frame, TaskHandle)"/>
     protected override TaskHandle Schedule(Frame f, TaskHandle taskHandle) {
       // reset indexer
       _sliceIndexer = -1;
@@ -7100,6 +8661,7 @@ namespace Quantum.Task {
       }
     }
 
+    /// <inheritdoc cref="SystemArrayComponent{T}.Update(FrameThreadSafe, EntityRef, T*)"/>
     public abstract void Update(FrameThreadSafe f, EntityRef entity, T* component);
   }
 }
@@ -7113,30 +8675,51 @@ namespace Quantum.Task {
   using System;
   using System.Threading;
 
+  /// <summary>
+  /// <para>Threaded task: similar to <see cref="SystemThreadedComponent{T}"/>, but, instead of iterating over a single component buffer, 
+  /// the threads will iterate over a filtered component set defined by the filter struct T, 
+  /// similarly to the <see cref="SystemMainThreadFilter{T}"/>.</para>
+  /// <para>Only access to the component itself and <see cref="FrameThreadSafe"/> is safe.</para>
+  /// <para>For more information request access to the online multi-threading documentation.</para>
+  /// </summary>
+  /// <typeparam name="T">Filter type.</typeparam>
   public abstract unsafe class SystemThreadedFilter<T> : SystemBase where T : unmanaged {
     private TaskDelegateHandle _threadedTaskDelegateHandle;
     private int                _sliceIndexer;
     private int                _sliceSize;
 
+    /// <summary>
+    /// The default slide size.
+    /// </summary>
     public const int DEFAULT_SLICE_SIZE = 16;
 
+    /// <inheritdoc cref="SystemArrayComponent{T}.SlicesCount"/>
     public virtual int SliceSize => DEFAULT_SLICE_SIZE;
 
+    /// <summary>
+    /// Override to change the if the filter should exclude culled entities.
+    /// </summary>
     public virtual bool UseCulling => true;
-
+    /// <summary>
+    /// A filter to exclude components from the iteration.
+    /// </summary>
     public virtual ComponentSet Without => default;
-
+    /// <summary>
+    /// A filter to include components from the iteration.
+    /// </summary>
     public virtual ComponentSet Any => default;
 
+    /// <inheritdoc cref="SystemArrayComponent{T}.OnInit(Frame)"/>
     public sealed override void OnInit(Frame f) {
       f.Context.TaskContext.RegisterDelegate(TaskThreadedFilter, GetType().Name + ".Update", ref _threadedTaskDelegateHandle);
       OnInitUser(f);
     }
 
+    /// <inheritdoc cref="SystemArrayComponent{T}.OnInitUser(Frame)"/>
     protected virtual void OnInitUser(Frame f) {
-
     }
 
+    /// <inheritdoc cref="SystemArrayComponent{T}.Schedule(Frame, TaskHandle)"/>
     protected override TaskHandle Schedule(Frame f, TaskHandle taskHandle) {
       // reset indexer
       _sliceIndexer = -1;
@@ -7173,6 +8756,8 @@ namespace Quantum.Task {
       }
     }
 
+
+    /// <inheritdoc cref="SystemArrayFilter{T}.Update(FrameThreadSafe, ref T)"/>
     public abstract void Update(FrameThreadSafe f, ref T filter);
   }
 }
@@ -7184,6 +8769,7 @@ namespace Quantum.Task {
 
 namespace Quantum.Core {
   using Quantum.Task;
+  using UnityEngine.Scripting;
 
   /// <summary>
   /// During Predicted frames, culls all <see cref="FrameBase.SetCullable">cullable</see> entities with
@@ -7191,6 +8777,7 @@ namespace Quantum.Core {
   /// <see cref="FrameContext.SetPredictionArea">prediction area</see>.
   /// </summary>
   /// \ingroup Culling
+  [Preserve]
   public unsafe class CullingSystem2D : SystemBase {
     protected override TaskHandle Schedule(Frame f, TaskHandle taskHandle) {
       return f.Context.Culling.Schedule2D(f, taskHandle);
@@ -7203,6 +8790,7 @@ namespace Quantum.Core {
   /// <see cref="FrameContext.SetPredictionArea">prediction area</see>.
   /// </summary>
   /// \ingroup Culling
+  [Preserve]
   public unsafe class CullingSystem3D : SystemBase {
     protected override TaskHandle Schedule(Frame f, TaskHandle taskHandle) {
       return f.Context.Culling.Schedule3D(f, taskHandle);
@@ -7217,18 +8805,52 @@ namespace Quantum.Core {
 
 namespace Quantum.Core {
   using System;
-  using System.Linq;
   using Photon.Deterministic;
+#if !DEBUG
   using Quantum.Task;
+#endif
 
+  /// <summary>
+  /// Predefined debug commands.
+  /// </summary>
   public static partial class DebugCommandType {
+    /// <summary>
+    /// Create a new entity.
+    /// </summary>
     public const int Create = 0;
+    /// <summary>
+    /// Destroy an entity or a component.
+    /// </summary>
     public const int Destroy = 1;
+    /// <summary>
+    /// Add used defined debug commands types starting from this value.
+    /// </summary>
     public const int UserCommandTypeStart = 1000;
   }
 
+  /// <summary>
+  /// The DebugCommand class allows to send debug commands to the simulation.
+  /// It's used by the Quantum state inspector for example.
+  /// The system is completely disabled in non-development builds or when defining QUANTUM_DEBUG_COMMAND_DISABLED.
+  /// </summary>
   public static partial class DebugCommand {
-    
+
+    /// <summary>
+    /// Partial method that allows to execute user defined debug commands.
+    /// </summary>
+    /// <param name="f">The frame reference.</param>
+    /// <param name="payload">The debug command payload.</param>
+    static partial void ExecuteUser(Frame f, ref Payload payload);
+    /// <summary>
+    /// Partial method that allows to serialize user defined debug commands.
+    /// </summary>
+    /// <param name="stream">Stream to serialized from and to.</param>
+    /// <param name="payload">The debug command payload.</param>
+    static partial void SerializeUser(BitStream stream, ref Payload payload);
+
+    /// <summary>
+    /// A callback Action that is invoked when a debug command was executed.
+    /// </summary>
     public static event Action<Payload, Exception> CommandExecuted
 #if DEBUG && !QUANTUM_DEBUG_COMMAND_DISABLED
     {
@@ -7240,6 +8862,9 @@ namespace Quantum.Core {
     { add { } remove { } }
 #endif
 
+    /// <summary>
+    /// Returns true when the debug command system is enabled.
+    /// </summary>
     public static bool IsEnabled =>
 #if DEBUG && !QUANTUM_DEBUG_COMMAND_DISABLED
       true;
@@ -7247,6 +8872,11 @@ namespace Quantum.Core {
       false;
 #endif
 
+    /// <summary>
+    /// Sends a debug command.
+    /// </summary>
+    /// <param name="game">The reference game.</param>
+    /// <param name="payload">The command payloads can include multiple instances.</param>
     public static void Send(QuantumGame game, params Payload[] payload) {
 #if DEBUG && !QUANTUM_DEBUG_COMMAND_DISABLED
       game.SendCommand(new InternalCommand() {
@@ -7257,22 +8887,46 @@ namespace Quantum.Core {
 #endif
     }
 
+    /// <summary>
+    /// Reset the debug command system and invalidate the <see cref="CommandExecuted"/> callback.
+    /// </summary>
     public static void Reset() {
 #if DEBUG && !QUANTUM_DEBUG_COMMAND_DISABLED
       _commandExecuted = null;
 #endif
     }
 
-
+    /// <summary>
+    /// The debug command payload.
+    /// </summary>
     public partial struct Payload {
+      /// <summary>
+      /// The command unique id.
+      /// </summary>
       public long Id;
+      /// <summary>
+      /// The <see cref="DebugCommandType"/>.
+      /// </summary>
       public int Type;
+      /// <summary>
+      /// The referenced entity to destroy or the created entity id.
+      /// </summary>
       public EntityRef Entity;
+      /// <summary>
+      /// Optionally a component set to destroy.
+      /// </summary>
       public ComponentSet Components;
+      /// <summary>
+      /// Serialized user data. For example entity prototype information to create a new entity.
+      /// </summary>
       public byte[] Data;
     }
 
-
+    /// <summary>
+    /// Factory to create a destroy entity debug command payload.
+    /// </summary>
+    /// <param name="entityRef">Entity to destroy.</param>
+    /// <returns>Debug command payload.</returns>
     public static Payload CreateDestroyPayload(EntityRef entityRef) {
       return new Payload() {
         Type = DebugCommandType.Destroy,
@@ -7280,6 +8934,13 @@ namespace Quantum.Core {
       };
     }
 
+    /// <summary>
+    /// Factory to create the payload to create a new entity from an entity prototype.
+    /// </summary>
+    /// <param name="entityRef">If set, then the existing entity will be overwritten, if not set a new entity will be created.</param>
+    /// <param name="prototype">Optionally the entity prototype to use. Can be null.</param>
+    /// <param name="serializer">The serializer.</param>
+    /// <returns>The debug command payload.</returns>
     public static Payload CreateMaterializePayload(EntityRef entityRef, EntityPrototype prototype, IAssetSerializer serializer) {
       ComponentSet componentSet = default;
       foreach (var component in prototype.Container.Components) {
@@ -7293,6 +8954,12 @@ namespace Quantum.Core {
       };
     }
 
+    /// <summary>
+    /// Factory to create the payload to remove a component from an entity.
+    /// </summary>
+    /// <param name="entityRef">The entity to remove a component from.</param>
+    /// <param name="componentType">The component type to remove.</param>
+    /// <returns>The debug command payload.</returns>
     public static Payload CreateRemoveComponentPayload(EntityRef entityRef, Type componentType) {
       var components = new ComponentSet();
       components.Add(ComponentTypeId.GetComponentIndex(componentType));
@@ -7379,9 +9046,6 @@ namespace Quantum.Core {
       return entity;
     }
 
-    static partial void ExecuteUser(Frame f, ref Payload payload);
-    static partial void SerializeUser(BitStream stream, ref Payload payload);
-
     private class InternalCommand : DeterministicCommand {
       public Payload[] Data = { };
 
@@ -7394,11 +9058,9 @@ namespace Quantum.Core {
           stream.Serialize(ref Data[i].Entity);
           stream.Serialize(ref Data[i].Data);
           unsafe {
-            var set = Data[i].Components;
-            for (int block = 0; block < ComponentSet.BLOCK_COUNT; ++block) {
-              stream.Serialize((&set)->_set + block);
-            }
-            Data[i].Components = set;
+            var components = Data[i].Components;
+            stream.SerializeBuffer(components.Set, ComponentSet.BLOCK_COUNT * sizeof(ulong));
+            Data[i].Components = components;
           }
           SerializeUser(stream, ref Data[i]);
         }
@@ -7440,11 +9102,27 @@ namespace Quantum.Core {
 #region Assets/Photon/Quantum/Simulation/Systems/Core/EntityPrototypeSystem.cs
 
 namespace Quantum.Core {
+  using UnityEngine.Scripting;
+
+  /// <summary>
+  /// The Quantum core system that creates map entities from the map prototype.
+  /// Switching maps will destroy all entities and create new ones.
+  /// </summary>
+  [Preserve]
   public unsafe sealed partial class EntityPrototypeSystem : SystemSignalsOnly, ISignalOnMapChanged {
+    /// <summary>
+    /// Create and destroy map entities of the initial map.
+    /// </summary>
+    /// <param name="f">The frame reference.</param>
     public override void OnInit(Frame f) {
       OnMapChanged(f, default);
     }
 
+    /// <summary>
+    /// Destroy current map entities and create new ones from the new map.
+    /// </summary>
+    /// <param name="f">The frame reference.</param>
+    /// <param name="previousMap">The previous map.</param>
     public void OnMapChanged(Frame f, AssetRef<Map> previousMap) {
       if (previousMap.Id.IsValid) {
         foreach (var (entity, _) in f.GetComponentIterator<MapEntityLink>()) {
@@ -7467,23 +9145,37 @@ namespace Quantum.Core {
 namespace Quantum.Core {
   using Quantum.Task;
   using Photon.Deterministic;
+  using UnityEngine.Scripting;
 
+  /// <summary>
+  /// The Quantum core navigation system.
+  /// </summary>
+  [Preserve]
   public unsafe class NavigationSystem : SystemBase, INavigationCallbacks {
     Frame _f;
 
+    /// <summary>
+    /// Create the navigation system update task graph.
+    /// </summary>
+    /// <param name="f">The frame reference.</param>
+    /// <param name="taskHandle">The root task handle used to create new tasks.</param>
+    /// <returns>Updated task handle with the navigation update graph.</returns>
     protected override TaskHandle Schedule(Frame f, TaskHandle taskHandle) {
       _f = f;
       return f.Navigation.Update(f, f.DeltaTime, this, taskHandle);
     }
 
+    /// <inheritdoc cref="INavigationCallbacks.OnWaypointReached(EntityRef, FPVector3, Navigation.WaypointFlag, ref bool)"/>
     public void OnWaypointReached(EntityRef entity, FPVector3 waypoint, Navigation.WaypointFlag waypointFlags, ref bool resetAgent) {
       _f.Signals.OnNavMeshWaypointReached(entity, waypoint, waypointFlags, ref resetAgent);
     }
 
+    /// <inheritdoc cref="INavigationCallbacks.OnSearchFailed(EntityRef, ref bool)"/>
     public void OnSearchFailed(EntityRef entity, ref bool resetAgent) {
       _f.Signals.OnNavMeshSearchFailed(entity, ref resetAgent);
     }
 
+    /// <inheritdoc cref="INavigationCallbacks.OnMoveAgent(EntityRef, FPVector2)"/>
     public void OnMoveAgent(EntityRef entity, FPVector2 desiredDirection) {
       _f.Signals.OnNavMeshMoveAgent(entity, desiredDirection);
     }
@@ -7497,69 +9189,111 @@ namespace Quantum.Core {
 
 namespace Quantum.Core {
   using Quantum.Task;
+  using UnityEngine.Scripting;
+
+  /// <summary>
+  /// The Quantum core physics system.
+  /// </summary>
+  [Preserve]
   public unsafe partial class PhysicsSystem2D : SystemBase, ICollisionCallbacks2D {
+    /// <summary>
+    /// Initializes the 2D physics system.
+    /// </summary>
+    /// <param name="f">The frame reference.</param>
     public override void OnInit(Frame f) {
       f.Physics2D.Init();
     }
 
+    /// <summary>
+    /// Create the 2D physics system update task graph.
+    /// </summary>
+    /// <param name="f">The frame reference.</param>
+    /// <param name="taskHandle">The initial task handle.</param>
+    /// <returns>The updated task handle with the physics update graph.</returns>
     protected override TaskHandle Schedule(Frame f, TaskHandle taskHandle) {
       return f.Physics2D.Update(this, f.DeltaTime, taskHandle);
     }
-    
+
+    /// <inheritdoc cref="ISignalOnCollision2D.OnCollision2D(Frame, CollisionInfo2D)"/>
     public void OnCollision2D(FrameBase f, CollisionInfo2D info) {
       ((Frame)f).Signals.OnCollision2D(info);
     }
 
+    /// <inheritdoc cref="ISignalOnCollisionEnter2D.OnCollisionEnter2D(Frame, CollisionInfo2D)"/>
     public void OnCollisionEnter2D(FrameBase f, CollisionInfo2D info) {
       ((Frame)f).Signals.OnCollisionEnter2D(info);
     }
 
+    /// <inheritdoc cref="ISignalOnCollisionExit2D.OnCollisionExit2D(Frame, ExitInfo2D)"/>
     public void OnCollisionExit2D(FrameBase f, ExitInfo2D info) {
       ((Frame)f).Signals.OnCollisionExit2D(info);
     }
 
+    /// <inheritdoc cref="ISignalOnTrigger2D.OnTrigger2D(Frame, TriggerInfo2D)"/>
     public void OnTrigger2D(FrameBase f, TriggerInfo2D info) {
       ((Frame)f).Signals.OnTrigger2D(info);
     }
 
+    /// <inheritdoc cref="ISignalOnTriggerEnter2D.OnTriggerEnter2D(Frame, TriggerInfo2D)"/>
     public void OnTriggerEnter2D(FrameBase f, TriggerInfo2D info) {
       ((Frame)f).Signals.OnTriggerEnter2D(info);
     }
 
+    /// <inheritdoc cref="ISignalOnTriggerExit2D.OnTriggerExit2D(Frame, ExitInfo2D)"/>
     public void OnTriggerExit2D(FrameBase f, ExitInfo2D info) {
       ((Frame)f).Signals.OnTriggerExit2D(info);
     }
   }
   
+  /// <summary>
+  /// The Quantum 3D physics system.
+  /// </summary>
+  [Preserve]
   public unsafe partial class PhysicsSystem3D : SystemBase, ICollisionCallbacks3D {
+    /// <summary>
+    /// Initializes the 3D physics system.
+    /// </summary>
+    /// <param name="f">The frame reference.</param>
     public override void OnInit(Frame f) {
       f.Physics3D.Init();
     }
-    
+
+    /// <summary>
+    /// Create the 3D physics system update task graph.
+    /// </summary>
+    /// <param name="f">The frame reference.</param>
+    /// <param name="taskHandle">The initial task handle.</param>
+    /// <returns>The updated task handle with the physics update graph.</returns>
     protected override TaskHandle Schedule(Frame f, TaskHandle taskHandle) {
       return f.Physics3D.Update(this, f.DeltaTime, taskHandle);
     }
 
+    /// <inheritdoc cref="ISignalOnCollision3D.OnCollision3D(Frame, CollisionInfo3D)"/>
     public void OnCollision3D(FrameBase f, CollisionInfo3D info) {
       ((Frame)f).Signals.OnCollision3D(info);
     }
 
+    /// <inheritdoc cref="ISignalOnCollisionEnter3D.OnCollisionEnter3D(Frame, CollisionInfo3D)"/>
     public void OnCollisionEnter3D(FrameBase f, CollisionInfo3D info) {
       ((Frame)f).Signals.OnCollisionEnter3D(info);
     }
 
+    /// <inheritdoc cref="ISignalOnCollisionExit3D.OnCollisionExit3D(Frame, ExitInfo3D)"/>
     public void OnCollisionExit3D(FrameBase f, ExitInfo3D info) {
       ((Frame)f).Signals.OnCollisionExit3D(info);
     }
 
+    /// <inheritdoc cref="ISignalOnTrigger3D.OnTrigger3D(Frame, TriggerInfo3D)"/>
     public void OnTrigger3D(FrameBase f, TriggerInfo3D info) {
       ((Frame)f).Signals.OnTrigger3D(info);
     }
 
+    /// <inheritdoc cref="ISignalOnTriggerEnter3D.OnTriggerEnter3D(Frame, TriggerInfo3D)"/>
     public void OnTriggerEnter3D(FrameBase f, TriggerInfo3D info) {
       ((Frame)f).Signals.OnTriggerEnter3D(info);
     }
 
+    /// <inheritdoc cref="ISignalOnTriggerExit3D.OnTriggerExit3D(Frame, ExitInfo3D)"/>
     public void OnTriggerExit3D(FrameBase f, ExitInfo3D info) {
       ((Frame)f).Signals.OnTriggerExit3D(info);
     }
@@ -7573,7 +9307,19 @@ namespace Quantum.Core {
 #region Assets/Photon/Quantum/Simulation/Systems/Core/PlayerConnectedSystem.cs
 
 namespace Quantum.Core {
+  using UnityEngine.Scripting;
+
+  /// <summary>
+  /// The Quantum core player connected system.
+  /// It will detect changes in the <see cref="Photon.Deterministic.DeterministicFrame.GetPlayerInputFlags(PlayerRef)"/> and call 
+  /// <see cref="ISignalOnPlayerConnected"/> and <see cref="ISignalOnPlayerDisconnected"/> respectively.
+  /// </summary>
+  [Preserve]
   public unsafe class PlayerConnectedSystem : SystemMainThread {
+    /// <summary>
+    /// Update the player connected system.
+    /// </summary>
+    /// <param name="f">The frame reference.</param>
     public override void Update(Frame f) {
       if (f.IsVerified == false) {
         return;
