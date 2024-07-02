@@ -39,9 +39,9 @@ namespace Tests
     }
 #>
 
-    partial class PerfTestBase {
+    static class ISignalDelegates {
 
-        public static void ClearSignals() {
+        public static void Clear() {
 <#
     foreach (var (signalName, methodName, args, argsPass) in signals)
     {

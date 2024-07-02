@@ -1,8 +1,8 @@
-using Quantum;
+﻿using Quantum;
 
 namespace Tests
 {
-    [SystemForSignalDelegateAttribute(typeof(SystemISignalOnCollision2D))]
+    [SystemForSignalDelegate(typeof(SystemISignalOnCollision2D))]
     public delegate void ISignalOnCollision2DDelegate(Frame f, CollisionInfo2D info);
     
     class SystemISignalOnCollision2D : SystemSignalsOnly, ISignalOnCollision2D {
@@ -11,7 +11,7 @@ namespace Tests
             Callback?.Invoke(f, info);
         }
     }
-    [SystemForSignalDelegateAttribute(typeof(SystemISignalOnCollisionEnter2D))]
+    [SystemForSignalDelegate(typeof(SystemISignalOnCollisionEnter2D))]
     public delegate void ISignalOnCollisionEnter2DDelegate(Frame f, CollisionInfo2D info);
     
     class SystemISignalOnCollisionEnter2D : SystemSignalsOnly, ISignalOnCollisionEnter2D {
@@ -20,7 +20,7 @@ namespace Tests
             Callback?.Invoke(f, info);
         }
     }
-    [SystemForSignalDelegateAttribute(typeof(SystemISignalOnCollisionExit2D))]
+    [SystemForSignalDelegate(typeof(SystemISignalOnCollisionExit2D))]
     public delegate void ISignalOnCollisionExit2DDelegate(Frame f, ExitInfo2D info);
     
     class SystemISignalOnCollisionExit2D : SystemSignalsOnly, ISignalOnCollisionExit2D {
@@ -29,7 +29,7 @@ namespace Tests
             Callback?.Invoke(f, info);
         }
     }
-    [SystemForSignalDelegateAttribute(typeof(SystemISignalOnTrigger2D))]
+    [SystemForSignalDelegate(typeof(SystemISignalOnTrigger2D))]
     public delegate void ISignalOnTrigger2DDelegate(Frame f, TriggerInfo2D info);
     
     class SystemISignalOnTrigger2D : SystemSignalsOnly, ISignalOnTrigger2D {
@@ -38,7 +38,7 @@ namespace Tests
             Callback?.Invoke(f, info);
         }
     }
-    [SystemForSignalDelegateAttribute(typeof(SystemISignalOnTriggerEnter2D))]
+    [SystemForSignalDelegate(typeof(SystemISignalOnTriggerEnter2D))]
     public delegate void ISignalOnTriggerEnter2DDelegate(Frame f, TriggerInfo2D info);
     
     class SystemISignalOnTriggerEnter2D : SystemSignalsOnly, ISignalOnTriggerEnter2D {
@@ -47,7 +47,7 @@ namespace Tests
             Callback?.Invoke(f, info);
         }
     }
-    [SystemForSignalDelegateAttribute(typeof(SystemISignalOnTriggerExit2D))]
+    [SystemForSignalDelegate(typeof(SystemISignalOnTriggerExit2D))]
     public delegate void ISignalOnTriggerExit2DDelegate(Frame f, ExitInfo2D info);
     
     class SystemISignalOnTriggerExit2D : SystemSignalsOnly, ISignalOnTriggerExit2D {
@@ -56,7 +56,7 @@ namespace Tests
             Callback?.Invoke(f, info);
         }
     }
-    [SystemForSignalDelegateAttribute(typeof(SystemISignalOnCollision3D))]
+    [SystemForSignalDelegate(typeof(SystemISignalOnCollision3D))]
     public delegate void ISignalOnCollision3DDelegate(Frame f, CollisionInfo3D info);
     
     class SystemISignalOnCollision3D : SystemSignalsOnly, ISignalOnCollision3D {
@@ -65,7 +65,7 @@ namespace Tests
             Callback?.Invoke(f, info);
         }
     }
-    [SystemForSignalDelegateAttribute(typeof(SystemISignalOnCollisionEnter3D))]
+    [SystemForSignalDelegate(typeof(SystemISignalOnCollisionEnter3D))]
     public delegate void ISignalOnCollisionEnter3DDelegate(Frame f, CollisionInfo3D info);
     
     class SystemISignalOnCollisionEnter3D : SystemSignalsOnly, ISignalOnCollisionEnter3D {
@@ -74,7 +74,7 @@ namespace Tests
             Callback?.Invoke(f, info);
         }
     }
-    [SystemForSignalDelegateAttribute(typeof(SystemISignalOnCollisionExit3D))]
+    [SystemForSignalDelegate(typeof(SystemISignalOnCollisionExit3D))]
     public delegate void ISignalOnCollisionExit3DDelegate(Frame f, ExitInfo3D info);
     
     class SystemISignalOnCollisionExit3D : SystemSignalsOnly, ISignalOnCollisionExit3D {
@@ -83,7 +83,7 @@ namespace Tests
             Callback?.Invoke(f, info);
         }
     }
-    [SystemForSignalDelegateAttribute(typeof(SystemISignalOnTrigger3D))]
+    [SystemForSignalDelegate(typeof(SystemISignalOnTrigger3D))]
     public delegate void ISignalOnTrigger3DDelegate(Frame f, TriggerInfo3D info);
     
     class SystemISignalOnTrigger3D : SystemSignalsOnly, ISignalOnTrigger3D {
@@ -92,7 +92,7 @@ namespace Tests
             Callback?.Invoke(f, info);
         }
     }
-    [SystemForSignalDelegateAttribute(typeof(SystemISignalOnTriggerEnter3D))]
+    [SystemForSignalDelegate(typeof(SystemISignalOnTriggerEnter3D))]
     public delegate void ISignalOnTriggerEnter3DDelegate(Frame f, TriggerInfo3D info);
     
     class SystemISignalOnTriggerEnter3D : SystemSignalsOnly, ISignalOnTriggerEnter3D {
@@ -101,7 +101,7 @@ namespace Tests
             Callback?.Invoke(f, info);
         }
     }
-    [SystemForSignalDelegateAttribute(typeof(SystemISignalOnTriggerExit3D))]
+    [SystemForSignalDelegate(typeof(SystemISignalOnTriggerExit3D))]
     public delegate void ISignalOnTriggerExit3DDelegate(Frame f, ExitInfo3D info);
     
     class SystemISignalOnTriggerExit3D : SystemSignalsOnly, ISignalOnTriggerExit3D {
@@ -111,9 +111,9 @@ namespace Tests
         }
     }
 
-    partial class PerfTestBase {
+    static class ISignalDelegates {
 
-        public static void ClearSignals() {
+        public static void Clear() {
             SystemISignalOnCollision2D.Callback = null;
             SystemISignalOnCollisionEnter2D.Callback = null;
             SystemISignalOnCollisionExit2D.Callback = null;

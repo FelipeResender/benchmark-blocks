@@ -1106,7 +1106,10 @@ namespace Quantum {
       }
 
       if (_currentMap != null && _currentSceneNeedsCleanup) {
-        _coroutine  = QuantumMapLoader.Instance?.StartCoroutine(UnloadScene(_currentMap.Scene));
+        if (!string.IsNullOrEmpty(_currentMap.Scene)) {
+          _coroutine = QuantumMapLoader.Instance?.StartCoroutine(UnloadScene(_currentMap.Scene));
+        }
+
         _currentMap = null;
       }
     }
@@ -1233,7 +1236,10 @@ namespace Quantum {
       } else {
         // simply load the scene async
         VerboseLog($"Previous scene \"{previousScene}\" was not loaded.");
-        _coroutine  = coroHost.StartCoroutine(LoadScene(newScene));
+        if (!string.IsNullOrEmpty(newScene)) {
+          _coroutine = coroHost.StartCoroutine(LoadScene(newScene));
+        }
+
         _currentMap = map;
       }
     }
@@ -4074,10 +4080,9 @@ namespace Quantum {
   
   public partial class QuantumGameGizmos {
     static unsafe void OnDrawGizmos_NavMesh(Frame frame, QuantumGameGizmosSettings gizmosSettings, GizmoType type) {
-      if (frame.Map == default) {
+      if (frame.MapAssetRef == default) {
         return;
       }
-      
       var navmeshList = new List<NavMesh>();
       navmeshList.AddRange(frame.Map.NavMeshes.Values);
 
@@ -11483,7 +11488,7 @@ namespace Quantum {
 
       // set runner factory and init Realtime.Async
       DefaultFactory = new QuantumRunnerUnityFactory();
-
+      
       // init profiler
       HostProfiler.Init(
         x => Profiler.BeginSample(x),
@@ -16902,7 +16907,7 @@ namespace Quantum {
     /// Find a property at a relative path to the parent property
     /// </summary>
     /// <param name="property">Serialized property to start searching from</param>
-    /// <param name="relativePath">´Relative path from the parent</param>
+    /// <param name="relativePath">�Relative path from the parent</param>
     /// <returns>Found property or null</returns>
     public static SerializedProperty FindPropertyRelativeToParent(this SerializedProperty property, string relativePath) {
       SerializedProperty otherProperty;
@@ -16934,7 +16939,7 @@ namespace Quantum {
     /// Find a property at a relative path to the parent property or throw an exception if not found.
     /// </summary>
     /// <param name="property">Serialized property to start searching from</param>
-    /// <param name="relativePath">´Relative path from the parent</param>
+    /// <param name="relativePath">�Relative path from the parent</param>
     /// <returns>Found property or null</returns>
     /// <exception cref="ArgumentOutOfRangeException">Is raised when not found</exception>
     public static SerializedProperty FindPropertyRelativeToParentOrThrow(this SerializedProperty property, string relativePath) {

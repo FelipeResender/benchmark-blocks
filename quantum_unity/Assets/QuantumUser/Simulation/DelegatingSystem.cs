@@ -12,6 +12,11 @@ namespace Quantum {
     public override void OnInit(Frame f) {
       _OnInit?.Invoke(f);
     }
+    
+    public static void Clear() {
+      _Update = null;
+      _OnInit = null;
+    }
   }
 
   // public class PreDelegatingSystem : DelegatingSystemBase<PreDelegatingSystem> {
@@ -21,5 +26,6 @@ namespace Quantum {
   // }
 
   public partial class DelegatingSystem : DelegatingSystemBase<DelegatingSystem> {
+    
   }
 }

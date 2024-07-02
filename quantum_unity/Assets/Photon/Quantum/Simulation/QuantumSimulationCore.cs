@@ -3266,12 +3266,14 @@ namespace Quantum {
       Buffer.BlockCopy(_inputSerializerWrite.Stream.Data, 0, result, 0, _inputSerializerWrite.Stream.BytesRequired);
     }
 
+    private static IntPtr _OnSimulateSection = HostProfiler.CreateMarker("QuantumGame.OnSimulate");
+    
     /// <summary>
     /// The callback is called when any simulation step was executed.
     /// </summary>
     /// <param name="state">Frame that was simulated</param>
     public void OnSimulate(DeterministicFrame state) {
-      HostProfiler.Start("QuantumGame.OnSimulate");
+      HostProfiler.Start(_OnSimulateSection);
 
       var f = (Frame)state;
 
@@ -3336,7 +3338,7 @@ namespace Quantum {
         LogSimulationException(exn);
       }
 
-      HostProfiler.End();
+      HostProfiler.End(_OnSimulateSection);
     }
 
     /// <summary>

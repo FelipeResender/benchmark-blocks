@@ -10,18 +10,18 @@ MonoBehaviour:
   m_Enabled: 1
   m_EditorHideFlags: 0
   m_Script: {fileID: -1722638350, guid: b156eeaae3f741b40af66649a4748430, type: 3}
-  m_Name: QuantumMap
+  m_Name: EmptyMap
   m_EditorClassIdentifier: 
   Identifier:
-    Path: QuantumUser/Resources/QuantumMap
+    Path: QuantumUser/Resources/EmptyMap
     Guid:
-      Value: 533558691768836790
+      Value: 384972325510610327
   UserAsset:
     Id:
       Value: 0
-  Scene: QuantumGameScene
-  ScenePath: Assets/QuantumUser/Scenes/QuantumGameScene.unity
-  SceneGuid: 0d2047bee46ac9c4f902895273b4fa42
+  Scene: 
+  ScenePath: 
+  SceneGuid: 
   WorldSize: 256
   BucketsCount: 16
   BucketsSubdivisions: 8
@@ -30,7 +30,7 @@ MonoBehaviour:
   TriangleMeshCellSize: 4
   StaticColliders3DTrianglesData:
     Id:
-      Value: 300339556446334810
+      Value: 0
   SerializeTrianglesMetadata: 0
   GridSizeX: 64
   GridSizeY: 64
@@ -40,7 +40,7 @@ MonoBehaviour:
   StaticColliders2D: []
   StaticColliders3D: []
   MapEntities: []
-  SerializedTriangleDataUncompressedSize: 8
+  SerializedTriangleDataUncompressedSize: 0
   references:
     version: 2
     RefIds: []

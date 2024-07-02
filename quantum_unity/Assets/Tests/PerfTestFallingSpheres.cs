@@ -6,6 +6,7 @@ namespace Tests {
   using Quantum;
   using Quantum.Prototypes;
   using Unity.PerformanceTesting;
+  using Unity.Profiling;
   using UnityEngine.TestTools;
   using Assert = NUnit.Framework.Assert;
 
@@ -14,11 +15,12 @@ namespace Tests {
     public static string[] DefaultTestCases = new[] {
       "QuantumUser/Resources/FallingBodiesTestSettings"
     };
-
+    
     [UnityTest, Performance]
-    public IEnumerator Single_100Percent_ComponentTest030([ValueSource(nameof(DefaultTestCases))] string assetPath) {
+    public IEnumerator Test([ValueSource(nameof(DefaultTestCases))] string assetPath) {
+      
       Physics3DFallingBodiesTestSettings t = null;
-      var setup = new TestSetup() {
+      return new QuantumTestRunner() {
         FrameCount = 1000,
         OnInit = f => {
           Assert.IsTrue(f.TryFindAsset(assetPath, out t));
@@ -65,8 +67,7 @@ namespace Tests {
             }
           })
         }
-      };
-      return RunTest(setup);
+      }.Run();
     }
   }
 }

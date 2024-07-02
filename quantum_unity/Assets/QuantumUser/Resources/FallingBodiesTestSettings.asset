@@ -18,7 +18,7 @@ MonoBehaviour:
       Value: 477997967600332437
   EntitiesPerInstantiationEvent: 10
   InstantiationEventEveryFrame: 1
-  MaxBodies: 10240
+  MaxBodies: 3000
   InitialPosition:
     X:
       RawValue: 0
