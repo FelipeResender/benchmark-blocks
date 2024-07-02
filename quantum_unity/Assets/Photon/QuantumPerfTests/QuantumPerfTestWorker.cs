@@ -1,7 +1,8 @@
-namespace Tests {
+namespace Quantum.PerfTests {
   using System;
   using System.Collections;
   using System.Collections.Generic;
+  using System.Linq;
   using Photon.Deterministic;
   using Quantum;
   using Unity.PerformanceTesting;
@@ -10,23 +11,25 @@ namespace Tests {
   using Assert = NUnit.Framework.Assert;
   using Input = Quantum.Input;
 
-  public class QuantumTestRunner {
+  public class PerfTestWorker {
     public Func<Frame, int> OnUpdate = f => 0;
     public Action<Frame>    OnInit;
     public Action<Frame>    OnBeforeUpdate;
-    public int              FrameCount    = 100;
-    public bool             IsInteractive = true;
+    public int              FrameCount     = 1000;
+    public bool             IsInteractive  = true;
+    public List<Delegate>   Signals        = new();
+    public List<string>     ProfileMarkers = new();
+    public int              RNGSeed        = 0x12345678;
+    public AssetRef<Map>    Map;
 
-    //public List<Type>       Systems    = new();
-    public List<Delegate> Signals = new();
 
     public IEnumerator Run() {
-
       DelegatingSystem._OnInit = f => {
         OnInit?.Invoke(f);
       };
 
       using QuantumRunner runner = CreateRunner();
+
       // spin everything up
       runner.Service(1.0);
 #if UNITY_EDITOR
@@ -56,30 +59,37 @@ namespace Tests {
 
         lastValue = value;
       };
+      
+      var interactive = IsInteractive;
+#if UNITY_EDITOR
+      if (QuantumPerfTestsSettings.ForceInteractive) {
+        interactive = true;
+      }
+#endif
 
-      var sg = new SampleGroup("QuantumGame.OnSimulate", SampleUnit.Millisecond);
-      using (Measure.ProfilerMarkers(sg)) {
+
+      var profileMarkers = ProfileMarkers.Select(x => new SampleGroup(x, SampleUnit.Millisecond)).ToArray();
+      using (Measure.ProfilerMarkers(profileMarkers)) {
         for (int i = 0; i < FrameCount; i++) {
-
           runner.Service(delta);
-
-          if (IsInteractive) {
+          if (interactive) {
             yield return null;
           }
         }
       }
 
       Debug.Log($"Last value: {lastValue}");
-
-      yield break;
     }
 
     private QuantumRunner CreateRunner() {
+      var mapRef = Map;
+      if (Map == default) {
+        var map = ScriptableObject.CreateInstance<Map>();
+        map.Guid = AssetGuid.NewGuid();
+        QuantumUnityDB.Global.AddAsset(map);
+        mapRef = map;
+      }
 
-      var map = ScriptableObject.CreateInstance<Map>();
-      map.Guid = AssetGuid.NewGuid();
-      QuantumUnityDB.Global.AddAsset(map);
-      
       var systemsConfig = ScriptableObject.CreateInstance<SystemsConfig>();
       systemsConfig.Guid = AssetGuid.NewGuid();
       systemsConfig.Reset();
@@ -88,17 +98,19 @@ namespace Tests {
         var systemType = AddSignalDelegate(signalHandler);
         systemsConfig.AddSystem(systemType);
       }
+
       QuantumUnityDB.Global.AddAsset(systemsConfig);
 
       RuntimeConfig runtimeConfig = new() {
         SimulationConfig = QuantumDefaultConfigs.Global.SimulationConfig,
         SystemsConfig    = systemsConfig,
-        Map              = map,
+        Map              = mapRef,
+        Seed             = RNGSeed,
       };
 
       SessionRunner.Arguments arguments = new() {
-        RunnerFactory         = QuantumRunnerUnityFactory.DefaultFactory,
-        GameParameters        = new() {
+        RunnerFactory = QuantumRunnerUnityFactory.DefaultFactory,
+        GameParameters = new() {
           AssetSerializer    = new QuantumUnityJsonSerializer(),
           CallbackDispatcher = QuantumCallback.Dispatcher,
           EventDispatcher    = QuantumEvent.Dispatcher,
@@ -114,30 +126,28 @@ namespace Tests {
         DeltaTimeType         = SimulationUpdateTime.Default,
       };
 
-      Debug.Log("Creating runner");
       var runner = QuantumRunner.StartGame(arguments);
       runner.IsSessionUpdateDisabled = true;
       return runner;
     }
-    
+
     static Type AddSignalDelegate(Delegate del) {
       // check if delegate lives in 
       var delegateAttribute = del.GetType().GetAttribute<SystemForSignalDelegateAttribute>();
       if (delegateAttribute == null) {
         Assert.Fail($"Provided delegate {del} does not have a SystemForSignalDelegateAttribute");
       }
-      
+
       var systemType = delegateAttribute.Type;
       Assert.IsTrue(systemType?.IsSubclassOf(typeof(SystemBase)) == true);
-        
+
       // get static callback field
       var field = systemType.GetField("Callback", System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.Static);
       Assert.NotNull(field);
-        
+
       // set the callback
       field.SetValue(null, del);
       return systemType;
     }
-
   }
 }

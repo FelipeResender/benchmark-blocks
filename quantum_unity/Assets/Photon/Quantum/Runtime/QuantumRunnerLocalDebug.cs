@@ -231,12 +231,21 @@ namespace Quantum {
       StartWithFrame(frameNumber, frameData);
     }
 
+    /// <summary>
+    /// Settings used to initialize the dynamic db.
+    /// </summary>
     [Serializable]
     public struct DynamicAssetDBSettings {
+      /// <summary>
+      /// A unity event passing the dynamic asset db.
+      /// </summary>
       [Serializable]
       public class InitialDynamicAssetsRequestedUnityEvent : UnityEvent<DynamicAssetDB> {
       }
       
+      /// <summary>
+      /// A callback called after the dynamic asset db was created.
+      /// </summary>
       public InitialDynamicAssetsRequestedUnityEvent OnInitialDynamicAssetsRequested;
 
       /// <inheritdoc cref="DynamicAssetDB.IsLegacyModeEnabled"/>

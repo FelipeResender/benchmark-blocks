@@ -1,51 +1,41 @@
-namespace Tests {
+namespace Quantum.PerfTests {
   using System;
   using System.Collections;
-  using System.Collections.Generic;
   using NUnit.Framework;
   using Photon.Deterministic;
   using Quantum;
   using Unity.PerformanceTesting;
-  using UnityEditor;
   using UnityEngine;
   using UnityEngine.TestTools;
-  using Assert = NUnit.Framework.Assert;
-  using Input = Quantum.Input;
-  
-  using ComponentAlwaysAdded = Quantum.Transform3D;
-  using Object = UnityEngine.Object;
 
-  public abstract partial class PerfTestBase {
-
+  public abstract partial class QuantumPerfTestBase {
     [SetUp]
     protected virtual void SetUp() {
       DelegatingSystem.Clear();
       ISignalDelegates.Clear();
     }
-    
+
     [TearDown]
     protected virtual void TearDown() {
       DelegatingSystem.Clear();
       ISignalDelegates.Clear();
     }
-    
-    
 
     [UnityTest]
     [Performance]
-    public IEnumerator __WarmupAndOverhead() => new QuantumTestRunner().Run();
-    
+    public IEnumerator __WarmupAndOverhead() => new PerfTestWorker().Run();
+
     protected static unsafe void CreateEntities(Frame f, int count, Type alwaysAdd, params ComponentSpec[] components) {
       if (alwaysAdd != null) {
         var newComponents = new ComponentSpec[components.Length + 1];
         Array.Copy(components, newComponents, components.Length);
-        
+
         for (int i = 0; i < newComponents.Length; ++i) {
           newComponents[i].Components.Add(ComponentTypeId.GetComponentIndex(alwaysAdd));
         }
 
         newComponents[^1].Probability = 1;
-        
+
         CreateEntities(f, count, newComponents);
       } else {
         CreateEntities(f, count, components);
@@ -65,13 +55,15 @@ namespace Tests {
           if (p > 0) {
             continue;
           }
-          
+
           for (int c = 0; c < ComponentSet.MAX_COMPONENTS; ++c) {
             if (!componentSet.IsSet(c)) {
               continue;
             }
+
             f.Add(entity, c, null);
           }
+
           break;
         }
       }
@@ -95,15 +87,15 @@ namespace Tests {
     }
 
     protected void SimpleSetUp(Frame f, TestParams t, params ComponentSpec[] specs) {
-      CreateEntities(f, t.EntityCount, typeof(ComponentAlwaysAdded), specs);
+      CreateEntities(f, t.EntityCount, typeof(Transform3D), specs);
       if (t.ShuffleEntities) {
         for (int i = 0; i < 5; i++) {
-          int count = DestroyEntities<ComponentAlwaysAdded>(f, FP._0_20);
-          CreateEntities(f, count, typeof(ComponentAlwaysAdded), specs);
+          int count = DestroyEntities<Transform3D>(f, FP._0_20);
+          CreateEntities(f, count, typeof(Transform3D), specs);
         }
       }
     }
-    
+
     [Serializable]
     public partial struct TestParams {
       public int  EntityCount;
@@ -113,11 +105,11 @@ namespace Tests {
         return JsonUtility.ToJson(this);
       }
     }
-    
+
     public struct ComponentSpec {
       public ComponentSet Components;
       public FP           Probability;
-      
+
       public static implicit operator ComponentSpec(Type type) {
         var set = new ComponentSet();
         set.Add(ComponentTypeId.GetComponentIndex(type));
@@ -142,7 +134,7 @@ namespace Tests {
           Probability = FP.FromFloat_UNSAFE(tuple.probability)
         };
       }
-      
+
       public static implicit operator ComponentSpec(int typeId) {
         var set = new ComponentSet();
         set.Add(typeId);

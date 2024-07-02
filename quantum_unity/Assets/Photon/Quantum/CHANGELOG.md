@@ -13,7 +13,7 @@
 - To add a new list of assets (e.g. with Addressables), mark a method with `[QuantumGlobalScriptableObjectLoaderMethod]` attribute.
 - `IAssetSerializer` interface changed, it also deals with `RuntimePlayer` and `RuntimeConfig` serialization
 - `AssetObjects` referencing other `AssetObjects` directly (not by `AssetRef<T>`) are supported, but will no longer be fully serializable by the default `IAssetSerializer`. This should be a concern for when any non-Unity runner is used or such assets are used in the `DynamicDB`.
-- More consistent `DynamicAssetDB` behaviour - assets can be added and disposed only during verified frames. Also, `AssetObject.Disposed` is called whenever a dynamic asset is disposed. Previous behaviour can be restored with `QuantumGameFlags.EnableLegacyDynamicDBMode` game flag
+- More consistent `DynamicAssetDB` behavior - assets can be added and disposed only during verified frames. Also, `AssetObject.Disposed` is called whenever a dynamic asset is disposed. Previous behavior can be restored with `QuantumGameFlags.EnableLegacyDynamicDBMode` game flag
 - Unless `QuantumGameFlags.EnableLegacyDynamicDBMode` is used, all assets in the `DynamicAssetDB` will get disposed upon shutting down simulation.
 - Removed "standalone assets" / `QPrefabs`. They have been fully replaced with standalone prototypes. All `_data` files should be removed.
 - Removed built-in support for AssetBundles.
@@ -113,6 +113,49 @@
 - `Quantum.TypeUtils` is now obsolete
 
 ## RC
+
+### Build 1519 (Jul 02, 2024)
+
+**Breaking Changes**
+
+- FP constant values have been updated to be closer to their target values `PiInv`, `PiTimes2`, `PiOver2`, `PiOver2Inv`, `PiOver4`, `Pi3Over4 `, `Pi4Over3`, `Deg2Rad`, `_0_02`, `_0_03`, `_0_04`, `_0_05`, `_0_10`, `Rad_360`, `Rad_90`, `Rad_45`, `Rad_22_50`, `_1_02`, `_1_05`, `_1_10`, `EN1`, `EN3`, `EN4`, `EN5`, `Epsilon`, `Log2_10`
+
+**Changes**
+
+- Upgraded Photon Realtime to version 5.0.9 (26. June 2024)
+- `DebugMesh` is obsolete now, use `QuantumMeshCollider.Global` instead
+- `Unlit/Quantum Debug Draw` renamed to `Unlit/Quantum Debug`
+- Moved the shader file `QuantumDebugDraw.shader` to `Assets/Photon/Quantum/Runtime/RuntimeAssets`
+- The Quantum Hub installation button is no longer disabled when the installation is detected as complete
+- Iterating `DynamicAssetDB` is much more performant, but still allocates
+- `IResourceManager` extensions now use generics to avoid virtual calls
+- `Quantum.Json` and standalone projects now support `ISerializationCallbackReceiver` interface
+- Added `Odin.Serialization` and `Odin.Attributes` assembly references to Quantum.Simulation. As all assembly references are optional (unless there are compile errors), a project does not need to have Odin installed
+- `Photon.Deterministic.PersistentMap` refactored. It is no longer `IEquatable`, implements visitor pattern and enumeration is much more performant, thought it still allocates a bit
+- Assets in `DynamicAssetDB` are now reference-counted. Counters are shared by DB instances that are linked to each other due to copy constructor or `DynamicAssetDB.CopyFrom`. Assets are disposed when their reference count drops to zero, due to `DynamicAssetDB.ReplaceAsset`, `DynamicAssetDB.DisposeAsset`, `DynamicAssetDB.Dispose` (entire db disposal) or `DynamicAssetDB.CopyFrom` (due to releasing the old state). Note that none of this applies if legacy mode is used
+
+**Removed**
+
+- The folder `Assets/Photon/Quantum/Resources/Gizmos` can be deleted as well as the asset `Assets/Photon/Quantum/Resources/QuantumShapes2D.fbx`
+- Unused code from `Native`
+- `QuantumGameFlags.EnableLegacyDynamicDBMode` - pass in a dynamic DB constructed with legacy mode instead
+
+**Bug Fixes**
+
+- Fixed: The contact point position in the collision check between capsule and polygon 2D
+- Fixed: The normal direction of the shape cast when the flag DetectOverlapsAtCastOrigin is enabled
+- Fixed: DynamicMap FromStaticMap not binding Entity Views
+- Fixed: SetTriangleUnchecked updates collider index
+- Fixed: The capsule 2D penetration in the corner of then box when the capsule rotation is frozen
+- Fixed: Mesh removal includes AllRuntimeTriangles
+- Fixed: An issue that caused the Quantum graph shaders to not work for VR
+- Fixed: An issue that caused to close the connection at the end of the Quantum online session, although `ShutdownConnectionOptions.None` was selected
+- Fixed: Made the menu config scene info entries work without setting an explicit `Name`
+- Fixed: An issue how switching to a `DynamicMap`  affected the scene entities and views of the source map. Now they are left intact and are only removed when switching to a regular map
+- Fixed: BitStream missing `ushort` extension method
+- Fixed: An issue in the InstantReplayDemo that prevented the replay from successfully restarting/looping etc
+- Fixed: A compilation error when scripting define `QUANTUM_REMOTE_PROFILER` is enabled
+- Fixed: NavMesh Gizmos throwing null when starting Quantum
 
 ### Build 1514 (Jun 18, 2024)
 

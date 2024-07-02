@@ -13,7 +13,7 @@ MonoBehaviour:
   m_Name: FallingBodiesTestSettings
   m_EditorClassIdentifier: 
   Identifier:
-    Path: QuantumUser/Resources/FallingBodiesTestSettings
+    Path: QuantumUser/PerfTests/FallingBodiesTestSettings
     Guid:
       Value: 477997967600332437
   EntitiesPerInstantiationEvent: 10

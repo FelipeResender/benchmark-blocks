@@ -929,9 +929,9 @@ namespace Quantum {
       param.PositionErrorTeleport = positionErrorTeleport;
       param.RotationErrorTeleport = rotationErrorTeleport;
 
-      HostProfiler.Start("QuantumEntityView.ApplyTransform");
-      ApplyTransform(ref param);
-      HostProfiler.End();
+      using (HostProfiler.Start("QuantumEntityView.ApplyTransform")) {
+        ApplyTransform(ref param);
+      }
 
       // reduce position error
       var positionCorrectionMultiplier = 1f - (Time.deltaTime * positionCorrectionRate);

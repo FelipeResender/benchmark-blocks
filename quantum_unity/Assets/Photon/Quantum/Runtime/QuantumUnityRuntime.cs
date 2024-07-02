@@ -822,7 +822,7 @@ namespace Quantum {
     /// </summary>
     /// <returns>An object to dispose to unsubscribe from the callbacks</returns>
     public static IDisposable Initialize() {
-      var disposable = new CompositeDisposabe();
+      var disposable = new CompositeDisposable();
 
       try {
 #pragma warning disable CS0618 // Type or member is obsolete
@@ -947,7 +947,7 @@ namespace Quantum {
       return disposable;
     }
 
-    private class CompositeDisposabe : IDisposable {
+    private class CompositeDisposable : IDisposable {
       private List<IDisposable> _disposables = new List<IDisposable>();
 
       public void Add(IDisposable disposable) {
@@ -1106,10 +1106,7 @@ namespace Quantum {
       }
 
       if (_currentMap != null && _currentSceneNeedsCleanup) {
-        if (!string.IsNullOrEmpty(_currentMap.Scene)) {
-          _coroutine = QuantumMapLoader.Instance?.StartCoroutine(UnloadScene(_currentMap.Scene));
-        }
-
+        _coroutine  = QuantumMapLoader.Instance?.StartCoroutine(UnloadScene(_currentMap.Scene));
         _currentMap = null;
       }
     }
@@ -1169,6 +1166,9 @@ namespace Quantum {
 
     private IEnumerator LoadScene(string sceneName) {
       try {
+        if (string.IsNullOrEmpty(sceneName)) {
+          yield break;
+        }
         PublishCallback(_callbackUnitySceneLoadBegin, sceneName);
         yield return SceneManager.LoadSceneAsync(sceneName, LoadSceneMode.Additive);
         SceneManager.SetActiveScene(SceneManager.GetSceneByName(sceneName));
@@ -1180,6 +1180,9 @@ namespace Quantum {
 
     private IEnumerator UnloadScene(string sceneName) {
       try {
+        if (string.IsNullOrEmpty(sceneName)) {
+          yield break;
+        }
         PublishCallback(_callbackUnitySceneUnloadBegin, sceneName);
         yield return SceneManager.UnloadSceneAsync(sceneName);
         PublishCallback(_callbackUnitySceneUnloadDone, sceneName);
@@ -1236,10 +1239,7 @@ namespace Quantum {
       } else {
         // simply load the scene async
         VerboseLog($"Previous scene \"{previousScene}\" was not loaded.");
-        if (!string.IsNullOrEmpty(newScene)) {
-          _coroutine = coroHost.StartCoroutine(LoadScene(newScene));
-        }
-
+        _coroutine  = coroHost.StartCoroutine(LoadScene(newScene));
         _currentMap = map;
       }
     }
@@ -2531,18 +2531,16 @@ namespace Quantum {
     /// Is only called internally.
     /// </summary>
     public void UpdateView() {
-      HostProfiler.Start("QuantumViewComponent.UpdateView");
+      using var profilerScope = HostProfiler.Start("QuantumViewComponent.UpdateView");
       OnUpdateView();
-      HostProfiler.End();
     }
 
     /// <summary>
     /// Is only called internally.
     /// </summary>
     public void LateUpdateView() {
-      HostProfiler.Start("QuantumViewComponent.OnLateUpdateView");
+      using var profilerScope = HostProfiler.Start("QuantumViewComponent.OnLateUpdateView");
       OnLateUpdateView();
-      HostProfiler.End();
     }
 
     /// <summary>
@@ -2673,8 +2671,14 @@ namespace Quantum {
   using System;
   using UnityEngine;
 
+  /// <summary>
+  /// The gizmo settings for the Quantum game.
+  /// </summary>
   [Serializable]
   public class QuantumGameGizmosSettings {
+    /// <summary>
+    /// The Unity overlay UI id used for the Quantum gizmos.
+    /// </summary>
     public const string ID = "QuantumGizmoSettings";
 
     /// <summary>
@@ -3332,9 +3336,16 @@ namespace Quantum {
       }
     }
 
+    /// <summary>
+    /// On BeforeBake override, empty.
+    /// </summary>
     public override void OnBeforeBake(QuantumMapData data) {
     }
 
+    /// <summary>
+    /// On Bake override, creates gizmos data for terrain collider.
+    /// </summary>
+    /// <param name="data"></param>
     public override void OnBake(QuantumMapData data) {
 #if QUANTUM_ENABLE_PHYSICS3D && !QUANTUM_DISABLE_PHYSICS3D
       if (_settings.StaticMeshTriangles.Enabled || _settings.StaticMeshNormals.Enabled) {
@@ -4083,6 +4094,7 @@ namespace Quantum {
       if (frame.MapAssetRef == default) {
         return;
       }
+      
       var navmeshList = new List<NavMesh>();
       navmeshList.AddRange(frame.Map.NavMeshes.Values);
 
@@ -8235,11 +8247,20 @@ namespace Quantum {
   using Photon.Realtime;
   using System;
 
+  /// <summary>
+  /// Obsolete: Not used anymore. Replace by using RealtimeClient directly.
+  /// </summary>
   [Obsolete("Not used anymore. Replace by using RealtimeClient directly.")]
   public class QuantumLoadBalancingClient : RealtimeClient {
+    /// <summary>
+    /// Constructor.
+    /// </summary>
     public QuantumLoadBalancingClient(ConnectionProtocol protocol = ConnectionProtocol.Udp) : base(protocol) {
     }
 
+    /// <summary>
+    /// Overridden connect method.
+    /// </summary>
     public virtual bool ConnectUsingSettings(AppSettings appSettings, string nickname) {
       return ConnectUsingSettings(appSettings);
     }
@@ -9256,15 +9277,31 @@ namespace Quantum {
   using static Quantum.QuantumNavMesh.DelaunayTriangulation;
 #endif
 
+  /// <summary>
+  /// This class is a collection of utility methods to import Unity NavMesh data into Quantum NavMesh data.
+  /// </summary>
   public partial class QuantumNavMesh {
 
     #region Importing From Unity
 
 #if QUANTUM_ENABLE_AI && !QUANTUM_DISABLE_AI
+    /// <summary>
+    /// Intermediate mesh vertex data structure.
+    /// </summary>
     public struct Vertex {
+      /// <summary>
+      /// The vertex id.
+      /// </summary>
       public String Id;
+      /// <summary>
+      /// The world position.
+      /// </summary>
       public Vector3Double Position;
 
+      /// <summary>
+      /// Convert the vertex data to a Quantum NavMesh vertex.
+      /// </summary>
+      /// <returns></returns>
       public NavMeshBakeDataVertex Convert() {
         return new NavMeshBakeDataVertex {
           //Id       = this.Id,
@@ -9274,68 +9311,115 @@ namespace Quantum {
     }
 #endif
 
+    /// <summary>
+    /// The default minimum agent radius. Will be updated during importing the Unity navmesh.
+    /// </summary>
     [StaticField(StaticFieldResetMode.None)]
     public static float DefaultMinAgentRadius = 0.25f;
 
+    /// <summary>
+    /// The Unity navmesh import settings.
+    /// </summary>
     [Serializable]
     public class ImportSettings {
+      /// <summary>
+      /// The Unity NavMesh is a collection of non - connected triangles, this option is very important and combines shared vertices.
+      /// </summary>
       [Tooltip("The Unity NavMesh is a collection of non - connected triangles, this option is very important and combines shared vertices.")]
       public bool WeldIdenticalVertices = true;
-
+      /// <summary>
+      /// Don't make the epsilon too small, vertices to fuse are missed, also don't make the value too big as it will deform your navmesh. Min = float.Epsilon.
+      /// </summary>
       [Tooltip("Don't make the epsilon too small, vertices to fuse are missed, also don't make the value too big as it will deform your navmesh. Min = float.Epsilon.")]
       [Min(float.Epsilon)]
       [DrawIf("WeldIdenticalVertices", true)]
       public float WeldVertexEpsilon = 0.0001f;
-
+      /// <summary>
+      /// Post processes imported Unity navmesh with a Delaunay triangulation to reduce long triangles.
+      /// </summary>
       [Tooltip("Post processes imported Unity navmesh with a Delaunay triangulation to reduce long triangles.")]
       public bool DelaunayTriangulation = false;
-
+      /// <summary>
+      /// In 3D the triangulation can deform the navmesh on slopes, check this option to restrict the triangulation to triangles that lie in the same plane.
+      /// </summary>
       [Tooltip("In 3D the triangulation can deform the navmesh on slopes, check this option to restrict the triangulation to triangles that lie in the same plane.")]
       [DrawIf("DelaunayTriangulation", true)]
       public bool DelaunayTriangulationRestrictToPlanes = false;
-
+      /// <summary>
+      /// Sometimes vertices are lying on other triangle edges, this will lead to unwanted borders being detected, this option splits those vertices.
+      /// </summary>
       [Tooltip("Sometimes vertices are lying on other triangle edges, this will lead to unwanted borders being detected, this option splits those vertices.")]
       public bool FixTrianglesOnEdges = true;
-
+      /// <summary>
+      /// Larger scaled navmeshes may require to increase this value (e.g. 0.001) when false-positive borders are detected. Min = float.Epsilon.
+      /// </summary>
       [Tooltip("Larger scaled navmeshes may require to increase this value (e.g. 0.001) when false-positive borders are detected. Min = float.Epsilon.")]
       [Min(float.Epsilon)]
       [DrawIf("FixTrianglesOnEdges", true)]
       public float FixTrianglesOnEdgesEpsilon = float.Epsilon;
-
+      /// <summary>
+      /// Make the height offset considerably larger than FixTrianglesOnEdgesEpsilon to better detect degenerate triangles. Is the navmesh becomes deformed chose a smaller epsilon. . Min = float.Epsilon. Default is 0.05.
+      /// </summary>
       [Tooltip("Make the height offset considerably larger than FixTrianglesOnEdgesEpsilon to better detect degenerate triangles. Is the navmesh becomes deformed chose a smaller epsilon. . Min = float.Epsilon. Default is 0.05.")]
       [Min(float.Epsilon)]
       [DrawIf("FixTrianglesOnEdges", true)]
       public float FixTrianglesOnEdgesHeightEpsilon = 0.05f;
-
+      /// <summary>
+      /// Automatically correct navmesh link position to the closest triangle by searching this distance (default is 0).
+      /// </summary>
       [Tooltip("Automatically correct navmesh link position to the closest triangle by searching this distance (default is 0).")]
       public float LinkErrorCorrection = 0.0f;
-
+      /// <summary>
+      /// SpiralOut will be considerably faster but fallback triangles can be null.
+      /// </summary>
       [Tooltip("SpiralOut will be considerably faster but fallback triangles can be null.")]
       public NavMeshBakeDataFindClosestTriangle ClosestTriangleCalculation = NavMeshBakeDataFindClosestTriangle.SpiralOut;
-
+      /// <summary>
+      /// Number of cells to search triangles in neighbors.
+      /// </summary>
       [Tooltip("Number of cells to search triangles in neighbors.")]
       [DrawIf("ClosestTriangleCalculation", (long)NavMeshBakeDataFindClosestTriangle.BruteForce, CompareOperator.NotEqual)]
       public int ClosestTriangleCalculationDepth = 3;
-
+      /// <summary>
+      /// Activate this and the navmesh baking will flip Y and Z to support navmeshes generated in the XY plane.
+      /// </summary>
       [Tooltip("Activate this and the navmesh baking will flip Y and Z to support navmeshes generated in the XY plane.")]
       public bool EnableQuantum_XY;
-
+      /// <summary>
+      /// The agent radius that the navmesh is build for. The value is retrieved from Unity settings when baking in Editor.
+      /// </summary>
       [Tooltip("The agent radius that the navmesh is build for. The value is retrieved from Unity settings when baking in Editor.")]
       public FP MinAgentRadius = FP._0_25;
-
+      /// <summary>
+      /// Toggle the Quantum region import.
+      /// </summary>
       [Tooltip("Toggle the Quantum region import.")]
       public bool ImportRegions = true;
-
+      /// <summary>
+      /// The artificial margin is necessary because the Unity NavMesh does not fit the source size very well. The value is added to the navmesh area and checked against all Quantum Region scripts to select the correct region id.
+      /// </summary>
       [Tooltip("The artificial margin is necessary because the Unity NavMesh does not fit the source size very well. The value is added to the navmesh area and checked against all Quantum Region scripts to select the correct region id.")]
       [DrawIf("ImportRegions", true)]
       public float RegionDetectionMargin = 0.4f;
-
+      /// <summary>
+      /// The region area ids to import.
+      /// </summary>
       public List<Int32> RegionAreaIds;
     }
 
 #if QUANTUM_ENABLE_AI && !QUANTUM_DISABLE_AI
 
+    /// <summary>
+    /// The navmesh import utility methods.
+    /// </summary>
     public static class ImportUtils {
+      /// <summary>
+      /// Tries to merge vertices that are very close to each other into a single vertex.
+      /// </summary>
+      /// <param name="vertices">Mesh vertices collection.</param>
+      /// <param name="triangles">Mesh triangles collection.</param>
+      /// <param name="cleanupEpsilon">The epsilon to detect identical vertices.</param>
+      /// <param name="reporter">Progress bar.</param>
       public static void WeldIdenticalVertices(ref Vertex[] vertices, ref NavMeshBakeDataTriangle[] triangles, float cleanupEpsilon, Action<float> reporter) {
         int[] vertexRemapTable = new int[vertices.Length];
         for (int i = 0; i < vertexRemapTable.Length; ++i) {
@@ -9366,6 +9450,12 @@ namespace Quantum {
         }
       }
 
+      /// <summary>
+      /// Removes unused vertices from the vertex array.
+      /// </summary>
+      /// <param name="vertices">Mesh vertices collection.</param>
+      /// <param name="triangles">Mesh triangles collection.</param>
+      /// <param name="reporter">Progress bar.</param>
       public static void RemoveUnusedVertices(ref Vertex[] vertices, ref NavMeshBakeDataTriangle[] triangles, Action<float> reporter) {
         var newVertices = new List<Vertex>();
         int[] remapArray = new int[vertices.Length];
@@ -9392,25 +9482,34 @@ namespace Quantum {
         vertices = newVertices.ToArray();
       }
 
+      /// <summary>
+      /// Tries to identify what region individual vertices belong to. Uses the original <see cref="QuantumNavMeshRegion"/> scripts to cast vertices against.
+      /// </summary>
+      /// <param name="scene">Unity scene.</param>
+      /// <param name="vertices">Mesh vertices collection.</param>
+      /// <param name="triangles">Mesh triangles collection.</param>
+      /// <param name="t">The current triangle index to analyze.</param>
+      /// <param name="regionMap">The list of regions already found.</param>
+      /// <param name="regionDetectionMargin">The region detection margin used to enlarge the reference share from the <see cref="QuantumNavMeshRegion"/> script.</param>
       public static void ImportRegions(Scene scene, ref Vertex[] vertices, ref NavMeshBakeDataTriangle[] triangles, int t, ref List<string> regionMap, float regionDetectionMargin) {
         // Expand the triangle until we have an isolated island containing all connected triangles of the same region
         HashSet<int> island = new HashSet<int>();
-        HashSet<int> verticies = new HashSet<int>();
+        HashSet<int> vertexMap = new HashSet<int>();
         island.Add(t);
-        verticies.Add(triangles[t].VertexIds[0]);
-        verticies.Add(triangles[t].VertexIds[1]);
-        verticies.Add(triangles[t].VertexIds[2]);
+        vertexMap.Add(triangles[t].VertexIds[0]);
+        vertexMap.Add(triangles[t].VertexIds[1]);
+        vertexMap.Add(triangles[t].VertexIds[2]);
         bool isIslandComplete = false;
         while (!isIslandComplete) {
           isIslandComplete = true;
           for (int j = 0; j < triangles.Length; j++) {
             if (triangles[t].Area == triangles[j].Area && !island.Contains(j)) {
               for (int v = 0; v < 3; v++) {
-                if (verticies.Contains(triangles[j].VertexIds[v])) {
+                if (vertexMap.Contains(triangles[j].VertexIds[v])) {
                   island.Add(j);
-                  verticies.Add(triangles[j].VertexIds[0]);
-                  verticies.Add(triangles[j].VertexIds[1]);
-                  verticies.Add(triangles[j].VertexIds[2]);
+                  vertexMap.Add(triangles[j].VertexIds[0]);
+                  vertexMap.Add(triangles[j].VertexIds[1]);
+                  vertexMap.Add(triangles[j].VertexIds[2]);
                   isIslandComplete = false;
                   break;
                 }
@@ -9486,6 +9585,15 @@ namespace Quantum {
         }
       }
 
+      /// <summary>
+      /// Tries to detect degenerated triangles that are emit by the Unity navmesh triangulation. This detects when triangles have vertices on other triangle edges.
+      /// </summary>
+      /// <param name="vertices">Mesh vertices collection.</param>
+      /// <param name="triangles">Mesh triangles collection.</param>
+      /// <param name="t">The current triangle index to analyze.</param>
+      /// <param name="v0">The first vertex.</param>
+      /// <param name="epsilon">The epsilon to use when detecting vertex on edges.</param>
+      /// <param name="epsilonHeight">The explicit height epsilon to use.</param>
       public static void FixTrianglesOnEdges(ref Vertex[] vertices, ref NavMeshBakeDataTriangle[] triangles, int t, int v0, float epsilon, float epsilonHeight) {
         int v1 = (v0 + 1) % 3;
         int vOther;
@@ -9496,6 +9604,10 @@ namespace Quantum {
         }
       }
 
+      /// <summary>
+      /// Detects if a triangle <paramref name="tri"/> has a vertex on the segment between <paramref name="v0"/> and <paramref name="v1"/>.
+      /// </summary>
+      /// <returns>The triangle that lies on the segment or -1.</returns>
       public static int FindTriangleOnEdge(ref Vertex[] vertices, ref NavMeshBakeDataTriangle[] triangles, int tri, int v0, int v1, float epsilon, float epsilonHeight, out int triangleVertexIndex) {
         triangleVertexIndex = -1;
         for (int t = 0; t < triangles.Length; ++t) {
@@ -9535,6 +9647,9 @@ namespace Quantum {
         return -1;
       }
 
+      /// <summary>
+      /// Splits a triangle into two triangles by inserting a new vertex at the edge between <paramref name="v0"/> and <paramref name="v1"/>.
+      /// </summary>
       public static void SplitTriangle(ref NavMeshBakeDataTriangle[] triangles, int t, int v0, int vNew) {
         // Split edge is between vertex index 0 and 1
         int v1 = (v0 + 1) % 3;
@@ -9559,6 +9674,13 @@ namespace Quantum {
       }
     }
 
+    /// <summary>
+    /// Import a Unity NavMesh into Quantum NavMesh data.
+    /// </summary>
+    /// <param name="scene">The Unity scene.</param>
+    /// <param name="settings">The navmesh import settings.</param>
+    /// <param name="name">The navmesh.</param>
+    /// <returns>The resulting imported navmesh.</returns>
     public static NavMeshBakeData ImportFromUnity(Scene scene, ImportSettings settings, string name) {
       var result = new NavMeshBakeData();
 
@@ -9752,6 +9874,11 @@ namespace Quantum {
       return result;
     }
 
+    /// <summary>
+    /// Iterates through all navmesh surfaces and detect the smallest agent radius used.
+    /// </summary>
+    /// <param name="navmeshSurfaces">List of navmesh surfaces to analyze.</param>
+    /// <returns>The smallets agent radius in FP.</returns>
     public static FP FindSmallestAgentRadius(GameObject[] navmeshSurfaces) {
 #if QUANTUM_ENABLE_AI_NAVIGATION      
       if (navmeshSurfaces != null) {
@@ -9924,48 +10051,97 @@ namespace Quantum {
       return resultTriangleIndex;
     }
 
+    /// <summary>
+    /// Math class only used by <see cref="QuantumNavMesh"/> import calculations. Uses double precision.
+    /// </summary>
     public struct Vector2Double {
+      /// <summary>
+      /// X component of the vector.
+      /// </summary>
       public double X;
+      /// <summary>
+      /// Y component of the vector.
+      /// </summary>
       public double Y;
 
+      /// <summary>
+      /// Create new vector.
+      /// </summary>
       public Vector2Double(double x, double y) {
         X = x;
         Y = y;
       }
 
+      /// <summary>
+      /// Minus operator.
+      /// </summary>
       public static Vector2Double operator -(Vector2Double a, Vector2Double b) {
         return new Vector2Double(a.X - b.X, a.Y - b.Y);
       }
 
+      /// <summary>
+      /// Calculate the distance between two points.
+      /// </summary>
+      /// <param name="a">Point a.</param>
+      /// <param name="b">Point b.</param>
+      /// <returns>The distance between to points.</returns>
       public static double Distance(Vector2Double a, Vector2Double b) {
         var v = a - b;
         return Math.Sqrt(v.X * v.X + v.Y * v.Y);
       }
     }
 
+    /// <summary>
+    /// Math class only used by <see cref="QuantumNavMesh"/> import calculations. Uses double precision.
+    /// </summary>
     public struct Vector3Double {
+      /// <summary>
+      /// X component of the vector.
+      /// </summary>
       public double X;
+      /// <summary>
+      /// Y component of the vector.
+      /// </summary>
       public double Y;
+      /// <summary>
+      /// Z component of the vector.
+      /// </summary>
       public double Z;
 
+      /// <summary>
+      /// Crate a new vector.
+      /// </summary>
       public Vector3Double(double x, double y, double z) {
         X = x;
         Y = y;
         Z = z;
       }
 
+      /// <summary>
+      /// Create a new vector using a Quantum fixed point vector.
+      /// </summary>
+      /// <param name="v"></param>
       public Vector3Double(FPVector3 v) {
         X = v.X.AsDouble;
         Y = v.Y.AsDouble;
         Z = v.Z.AsDouble;
       }
 
+      /// <summary>
+      /// Create a new vector using a Unity vector.
+      /// </summary>
+      /// <param name="v"></param>
       public Vector3Double(Vector3 v) {
         X = v.x;
         Y = v.y;
         Z = v.z;
       }
 
+      /// <summary>
+      /// Returns a value indicating whether this instance is equal to a specified Vector3Double value.
+      /// </summary>
+      /// <param name="obj">An Vector3Double value to compare to this instance.</param>
+      /// <returns><see langword="true"/> if other has the same value as this instance; otherwise, <see langword="false"/>.</returns>
       public override Boolean Equals(Object obj) {
         if (obj is Vector3Double) {
           return this == ((Vector3Double)obj);
@@ -9974,6 +10150,10 @@ namespace Quantum {
         return false;
       }
 
+      /// <summary>
+      /// Overrides the default hash function.
+      /// </summary>
+      /// <returns>A hash code for the current object.</returns>
       public override Int32 GetHashCode() {
         unchecked {
           var hash = 17;
@@ -9984,55 +10164,99 @@ namespace Quantum {
         }
       }
 
+      /// <summary>
+      /// Operator override for which checks if two instances of Vector3Double are equal.
+      /// </summary>
+      /// <returns><see langword="true"/> if the instances are equal.</returns>
       public static bool operator ==(Vector3Double a, Vector3Double b) {
         return a.X == b.X && a.Y == b.Y && a.Z == b.Z;
       }
 
+      /// <summary>
+      /// Operator override for which checks if two instances of REPLACE are not equal.
+      /// </summary>
+      /// <returns><see langword="true"/> if the instances are not equal.</returns>
       public static bool operator !=(Vector3Double a, Vector3Double b) {
         return a.X != b.X || a.Y != b.Y || a.Z != b.Z;
       }
 
+      /// <summary>
+      /// Subtracts two Vector3Double instances.
+      /// </summary>
       public static Vector3Double operator -(Vector3Double a, Vector3Double b) {
         return new Vector3Double(a.X - b.X, a.Y - b.Y, a.Z - b.Z);
       }
 
+      /// <summary>
+      /// Adds two Vector3Double instances.
+      /// </summary>
       public static Vector3Double operator +(Vector3Double a, Vector3Double b) {
         return new Vector3Double(a.X + b.X, a.Y + b.Y, a.Z + b.Z);
       }
 
+      /// <summary>
+      /// Multiplies a Vector3Double instance with a scalar.
+      /// </summary>
       public static Vector3Double operator *(Vector3Double a, double b) {
         return new Vector3Double(a.X * b, a.Y * b, a.Z * b);
       }
 
+      /// <summary>
+      /// Multiplies a Vector3Double instance with a scalar.
+      /// </summary>
       public static Vector3Double operator *(double b, Vector3Double a) {
         return new Vector3Double(a.X * b, a.Y * b, a.Z * b);
       }
 
+      /// <summary>
+      /// Converts into fixed point vector. Only safe during editor as it uses <see cref="FP.FromFloat_UNSAFE(float)"/>.
+      /// </summary>
+      /// <returns></returns>
       public FPVector3 AsFPVector() {
         return new FPVector3(FP.FromFloat_UNSAFE((float)X), FP.FromFloat_UNSAFE((float)Y), FP.FromFloat_UNSAFE((float)Z));
       }
 
+      /// <summary>
+      /// Converts into Unity vector.
+      /// </summary>
+      /// <returns></returns>
       public Vector3 AsVector() {
         return new Vector3((float)X, (float)Y, (float)Z);
       }
 
+      /// <summary>
+      /// Returns the square magnitude of the vector.
+      /// </summary>
       public double SqrMagnitude() {
         return X * X + Y * Y + Z * Z;
       }
 
+      /// <summary>
+      /// Returns the square magnitude <paramref name="v"/>
+      /// </summary>
       public static double SqrMagnitude(Vector3Double v) {
         return v.X * v.X + v.Y * v.Y + v.Z * v.Z;
       }
 
+      /// <summary>
+      /// Returns the magnitude of the vector.
+      /// </summary>
       public double Magnitude() {
         return Math.Sqrt(X * X + Y * Y + Z * Z);
       }
 
+      /// <summary>
+      /// Returns the distance between two points.
+      /// </summary>
       public static double Distance(Vector3Double a, Vector3Double b) {
         var v = a - b;
         return Math.Sqrt(v.X * v.X + v.Y * v.Y + v.Z * v.Z);
       }
 
+      /// <summary>
+      /// Normalized the vector.
+      /// </summary>
+      /// <exception cref="ArgumentException">Is raised when the magnitude is 0.</exception>
       public void Normalize() {
         var d = Math.Sqrt(X * X + Y * Y + Z * Z);
 
@@ -10045,14 +10269,23 @@ namespace Quantum {
         Z = Z / d;
       }
 
+      /// <summary>
+      /// Converts the numeric value of this instance to its equivalent string representation.
+      /// </summary>
       public override string ToString() {
         return $"{X} {Y} {Z}";
       }
 
+      /// <summary>
+      /// Returns the dot product of two vectors.
+      /// </summary>
       public static double Dot(Vector3Double a, Vector3Double b) {
         return a.X * b.X + a.Y * b.Y + a.Z * b.Z;
       }
 
+      /// <summary>
+      /// Returns the cross product of two vectors.
+      /// </summary>
       public static Vector3Double Cross(Vector3Double a, Vector3Double b) {
         return new Vector3Double(
           a.Y * b.Z - a.Z * b.Y,
@@ -10060,6 +10293,9 @@ namespace Quantum {
           a.X * b.Y - a.Y * b.X);
       }
 
+      /// <summary>
+      /// Calculates if the point <paramref name="p"/> is between the two points <paramref name="v0"/> and <paramref name="v1"/>.
+      /// </summary>
       public static bool IsPointBetween(Vector3Double p, Vector3Double v0, Vector3Double v1, float epsilon, float epsilonHeight) {
         // We don't want to compare end points only is p is "really" in between
         if (p == v0 || p == v1 || v0 == v1)
@@ -10111,6 +10347,9 @@ namespace Quantum {
         return result;
       }
 
+      /// <summary>
+      /// Calculates the closest distance from point <paramref name="p"/> to the triangle defined by <paramref name="v0"/>, <paramref name="v1"/> and <paramref name="v2"/>.
+      /// </summary>
       public static double ClosestDistanceToTriangle(Vector3Double p, Vector3Double v0, Vector3Double v1, Vector3Double v2, ref Vector3Double closestPoint) {
         var diff = p - v0;
         var edge0 = v1 - v0;
@@ -10813,7 +11052,7 @@ namespace Quantum {
     private void EndConnection(ShutdownConnectionOptions option) {
       switch (option) {
         case ShutdownConnectionOptions.None:
-          break;
+          return;
         case ShutdownConnectionOptions.LeaveRoom:
         case ShutdownConnectionOptions.LeaveRoomAndBecomeInactive:
           if (_realtimeClient.State == ClientState.Joined) {
@@ -11237,7 +11476,13 @@ namespace Quantum {
   using System.Collections.Generic;
   using Photon.Deterministic;
 
+  /// <summary>
+  /// A registry to keep track of all active Quantum runners.
+  /// </summary>
   public class QuantumRunnerRegistry {
+    /// <summary>
+    /// Singleton instance of the registry. Creates a new instance if none exists.
+    /// </summary>
     public static QuantumRunnerRegistry Global {
       get {
         if (_instance == null) {
@@ -11250,7 +11495,14 @@ namespace Quantum {
 
     private static QuantumRunnerRegistry _instance;
 
+    /// <summary>
+    /// The default runner.
+    /// <para>If multiple runners exists it will return the first one.</para>
+    /// </summary>
     public SessionRunner  Default => _activeRunners.Count == 0 ? default : _activeRunners[0];
+    /// <summary>
+    /// Returns all runners.
+    /// </summary>
     public IEnumerable<SessionRunner> ActiveRunners => _activeRunners;
 
     private List<SessionRunner> _activeRunners = new List<SessionRunner>();
@@ -11261,12 +11513,18 @@ namespace Quantum {
       _instance = null;
     }
 
+    /// <summary>
+    /// Calls <see cref="SessionRunner.Shutdown(ShutdownCause)"/> on all runners.
+    /// </summary>
     public void ShutdownAll() {
       for (int i = _activeRunners.Count - 1; i >= 0; i--) {
         _activeRunners[i].Shutdown();
       }
     }
 
+    /// <summary>
+    /// Calls <see cref="SessionRunner.WaitForShutdownAsync(System.Threading.CancellationToken)"/> on all runners."/>
+    /// </summary>
     public System.Threading.Tasks.Task ShutdownAllAsync() {
       var tasks = new List<System.Threading.Tasks.Task>();
       for (int i = 0; i < _activeRunners.Count; i++) {
@@ -11276,14 +11534,25 @@ namespace Quantum {
       return System.Threading.Tasks.Task.WhenAll(tasks);
     }
 
+    /// <summary>
+    /// Add a runner.
+    /// </summary>
     public void AddRunner(SessionRunner runner) {
       _activeRunners.Add(runner);
     }
 
+    /// <summary>
+    /// Remove a runner.
+    /// </summary>
     public void RemoveRunner(SessionRunner runner) {
       _activeRunners.Remove(runner);
     }
 
+    /// <summary>
+    /// Find a runner by <see cref="SessionRunner.Id"/>.
+    /// </summary>
+    /// <param name="id">Runner id to search.</param>
+    /// <returns>The runner with the given id or <see langword="null"/>.</returns>
     public SessionRunner FindRunner(string id) {
       for (int i = 0; i < _activeRunners.Count; ++i) {
         if (_activeRunners[i].Id == id)
@@ -11293,6 +11562,11 @@ namespace Quantum {
       return default(SessionRunner);
     }
 
+    /// <summary>
+    /// Find a runner by <see cref="SessionRunner.DeterministicGame"/>.
+    /// </summary>
+    /// <param name="game">The game that the runner belongs to.</param>
+    /// <returns>The runner with the given game or <see langword="null"/>.</returns>
     public SessionRunner FindRunner(IDeterministicGame game) {
       for (int i = 0; i < _activeRunners.Count; ++i) {
         if (_activeRunners[i].DeterministicGame == game)
@@ -11488,17 +11762,11 @@ namespace Quantum {
 
       // set runner factory and init Realtime.Async
       DefaultFactory = new QuantumRunnerUnityFactory();
+
+#if ENABLE_PROFILER
+      HostProfiler.Init(new QuantumUnityHostProfiler());
+#endif
       
-      // init profiler
-      HostProfiler.Init(
-        x => Profiler.BeginSample(x),
-        () => Profiler.EndSample());
-
-      // init thread profiling (2019.x and up)
-      HostProfiler.InitThread(
-        (a, b) => Profiler.BeginThreadProfiling(a, b),
-        () => Profiler.EndThreadProfiling());
-
       // init debug draw functions
 #if QUANTUM_DRAW_SHAPES || UNITY_EDITOR
       Draw.Init(DebugDraw.Ray, DebugDraw.Line, DebugDraw.Circle, DebugDraw.Sphere, DebugDraw.Rectangle, DebugDraw.Box, DebugDraw.Capsule, DebugDraw.Clear);
@@ -11704,6 +11972,51 @@ namespace Quantum {
     public Boolean                                 Trigger;
   }
 }
+
+#endregion
+
+
+#region Assets/Photon/Quantum/Runtime/QuantumUnityHostProfiler.cs
+
+#if ENABLE_PROFILER
+namespace Quantum {
+  using Profiling;
+  using Unity.Profiling;
+  using Unity.Profiling.LowLevel;
+  using Unity.Profiling.LowLevel.Unsafe;
+
+  /// <summary>
+  /// Profiler implementation for Unity.
+  /// </summary>
+  public class QuantumUnityHostProfiler : IHostProfiler {
+    /// <inheritdoc cref="IHostProfiler.CreateMarker"/>
+    public HostProfilerMarker CreateMarker(string name) {
+      var ptr = ProfilerUnsafeUtility.CreateMarker(name, ProfilerCategory.Scripts, MarkerFlags.Default, 0);
+      return new HostProfilerMarker(ptr);
+    }
+
+    /// <inheritdoc cref="IHostProfiler.StartMarker"/>
+    public void StartMarker(HostProfilerMarker marker) {
+      ProfilerUnsafeUtility.BeginSample(marker.RawValue);
+    }
+
+    /// <inheritdoc cref="IHostProfiler.EndMarker"/>
+    public void EndMarker(HostProfilerMarker marker) {
+      ProfilerUnsafeUtility.EndSample(marker.RawValue);
+    }
+
+    /// <inheritdoc cref="IHostProfiler.StartNamedMarker"/>
+    public void StartNamedMarker(string markerName) {
+      UnityEngine.Profiling.Profiler.BeginSample(markerName);
+    }
+
+    /// <inheritdoc cref="IHostProfiler.EndLastNamedMarker"/>
+    public void EndLastNamedMarker() {
+      UnityEngine.Profiling.Profiler.EndSample();
+    }
+  }
+}
+#endif
 
 #endregion
 
@@ -12347,6 +12660,9 @@ namespace Quantum {
 #endif
 
 #if ENABLE_IL2CPP
+  /// <summary>
+  /// Collection of native memory allocations used by Quantum when creating <see cref="QuantumUnityNativeAllocator.GetManagedVTable"/> under IL2CPP.
+  /// </summary>
   internal sealed unsafe class QuantumUnityNativeAllocator_IL2CPP {
     static readonly HashSet<IntPtr> _allocated = new();
     static void TrackAlloc(IntPtr ptr) {
@@ -12365,29 +12681,35 @@ namespace Quantum {
       }
 #endif
     }
+    /// <inheritdoc cref="QuantumUnityNativeAllocator.Alloc(int)"/>
     [MonoPInvokeCallback(typeof(Native.AllocateDelegate))]
     public static IntPtr Allocate(UIntPtr size) {
       var ptr = (IntPtr)UnsafeUtility.Malloc((uint)size, 4, UnityAllocator.Persistent);
       TrackAlloc(ptr);
       return ptr;
     }
+    /// <inheritdoc cref="QuantumUnityNativeAllocator.Free(void*)"/>
     [MonoPInvokeCallback(typeof(Native.FreeDelegate))]
     public static void Free(IntPtr ptr) {
       TrackFree(ptr);
       UnsafeUtility.Free((void*)ptr, UnityAllocator.Persistent);
     }
+    /// <inheritdoc cref="QuantumUnityNativeUtility.Copy(void*, void*, int)"/>
     [MonoPInvokeCallback(typeof(Native.CopyDelegate))]
     public static void Copy(IntPtr dst, IntPtr src, UIntPtr size) {
       UnsafeUtility.MemCpy((void*)dst, (void*)src, (int)size);
     }
+    /// <inheritdoc cref="QuantumUnityNativeUtility.Move(void*, void*, int)"/>
     [MonoPInvokeCallback(typeof(Native.MoveDelegate))]
     public static void Move(IntPtr dst, IntPtr src, UIntPtr size) {
       UnsafeUtility.MemMove((void*)dst, (void*)src, (int)size);
     }
+    /// <inheritdoc cref="QuantumUnityNativeUtility.Set(void*, byte, int)"/>
     [MonoPInvokeCallback(typeof(Native.SetDelegate))]
     public static void Set(IntPtr ptr, byte value, UIntPtr size) {
       UnsafeUtility.MemSet((void*)ptr, value, (int)size);
     }
+    /// <inheritdoc cref="QuantumUnityNativeUtility.Compare(void*, void*, int)"/>
     [MonoPInvokeCallback(typeof(Native.CompareDelegate))]
     public static int Compare(IntPtr ptr1, IntPtr ptr2, UIntPtr size) {
       return UnsafeUtility.MemCmp((void*)ptr1, (void*)ptr2, (int)size);
@@ -12395,28 +12717,36 @@ namespace Quantum {
   }
 #endif
 
+  /// <summary>
+  /// The Unity implementation of the Quantum native memory allocator.
+  /// </summary>
   public sealed unsafe class QuantumUnityNativeAllocator : Native.Allocator {
+    /// <inheritdoc />
     public sealed override void* Alloc(int count) {
       var ptr = UnsafeUtility.Malloc((uint)count, 4, UnityAllocator.Persistent);
       TrackAlloc(ptr);
       return ptr;
     }
 
+    /// <inheritdoc />
     public sealed override void* Alloc(int count, int alignment) {
       var ptr = UnsafeUtility.Malloc((uint)count, alignment, UnityAllocator.Persistent);
       TrackAlloc(ptr);
       return ptr;
     }
 
+    /// <inheritdoc />
     public sealed override void Free(void* ptr) {
       TrackFree(ptr);
       UnsafeUtility.Free(ptr, UnityAllocator.Persistent);
     }
 
+    /// <inheritdoc />
     protected sealed override void Clear(void* dest, int count) {
       UnsafeUtility.MemClear(dest, (uint)count);
     }
 
+    /// <inheritdoc />
     public sealed override Native.AllocatorVTableManaged GetManagedVTable() {
 #if ENABLE_IL2CPP
       // IL2CPP does not support marshaling delegates that point to instance methods to native code.
@@ -12434,28 +12764,39 @@ namespace Quantum {
     }
   }
 
+  /// <summary>
+  /// The Unity implementation of the Quantum native utility functions.
+  /// </summary>
   public unsafe class QuantumUnityNativeUtility : Native.Utility {
-    
+
+    /// <inheritdoc />
     public override void Clear(void* dest, int count) {
       UnsafeUtility.MemClear(dest, (long)count);
     }
 
+    /// <inheritdoc />
     public override void Copy(void* dest, void* src, int count) {
       UnsafeUtility.MemCpy(dest, src, (long)count);
     }
 
+    /// <inheritdoc />
     public override void Move(void* dest, void* src, int count) {
       UnsafeUtility.MemMove(dest, src, (long)count);
     }
 
+    /// <inheritdoc />
     public override void Set(void* dest, byte value, int count) {
       UnsafeUtility.MemSet(dest, value, count);
     }
 
+    /// <inheritdoc />
     public override unsafe int Compare(void* ptr1, void* ptr2, int count) {
       return UnsafeUtility.MemCmp(ptr1, ptr2, count);
     }
 
+    /// <summary>
+    /// Reset statics. Currently does nothing.
+    /// </summary>
     [StaticFieldResetMethod]
     public static void ResetStatics() {
     }
@@ -13096,7 +13437,9 @@ namespace Quantum {
     
     [Serializable]
     private class TypeNameWrapper {
+#pragma warning disable CS0649 // Set by serialization
       public string __TypeName;
+#pragma warning restore CS0649
     }
   }
 }
@@ -15368,7 +15711,7 @@ namespace Quantum {
     /// <param name="transform">The transform of the polygon.</param>
     /// <param name="vertices">The vertices of the polygon.</param>
     /// <param name="height">The height of the polygon.</param>
-    /// <param name="drawNormals">Whether to draw the polygon normals.</param>
+    /// <param name="drawNormals">Whether to draw the polygon normal.</param>
     /// <param name="color">The color of the polygon.</param>
     /// <param name="style">The style of the gizmo.</param>
     public static void DrawGizmoPolygon2D(Transform transform, FPVector2[] vertices, Single height, bool drawNormals, Color color, QuantumGizmoStyle style = default) {
@@ -15376,6 +15719,7 @@ namespace Quantum {
       DrawGizmoPolygon2D(matrix, vertices, height, drawNormals, color, style: style);
     }
 
+    /// <inheritdoc cref="DrawGizmoPolygon2D(Vector3, Quaternion, FPVector2[], float, bool, Color, QuantumGizmoStyle)"/>
     public static void DrawGizmoPolygon2D(Matrix4x4 matrix, FPVector2[] vertices, Single height, bool drawNormals, Color color, QuantumGizmoStyle style = default) {
 
       if (vertices.Length < 3) return;
@@ -15393,7 +15737,7 @@ namespace Quantum {
     /// </summary>
     /// <param name="vertices">The vertices of the polygon in world space.</param>
     /// <param name="height">The height of the polygon.</param>
-    /// <param name="drawNormals">Determines whether to draw normals.</param>
+    /// <param name="drawNormals">Determines whether to draw normal.</param>
     /// <param name="color">The color of the polygon.</param>
     /// <param name="style">The gizmo style.</param>
     private static void DrawGizmoPolygon2DInternal(Vector3[] vertices, Single height, Boolean drawNormals, Color color, QuantumGizmoStyle style = default) {
@@ -16907,7 +17251,7 @@ namespace Quantum {
     /// Find a property at a relative path to the parent property
     /// </summary>
     /// <param name="property">Serialized property to start searching from</param>
-    /// <param name="relativePath">ï¿½Relative path from the parent</param>
+    /// <param name="relativePath">´Relative path from the parent</param>
     /// <returns>Found property or null</returns>
     public static SerializedProperty FindPropertyRelativeToParent(this SerializedProperty property, string relativePath) {
       SerializedProperty otherProperty;
@@ -16939,7 +17283,7 @@ namespace Quantum {
     /// Find a property at a relative path to the parent property or throw an exception if not found.
     /// </summary>
     /// <param name="property">Serialized property to start searching from</param>
-    /// <param name="relativePath">ï¿½Relative path from the parent</param>
+    /// <param name="relativePath">´Relative path from the parent</param>
     /// <returns>Found property or null</returns>
     /// <exception cref="ArgumentOutOfRangeException">Is raised when not found</exception>
     public static SerializedProperty FindPropertyRelativeToParentOrThrow(this SerializedProperty property, string relativePath) {

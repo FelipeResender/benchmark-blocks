@@ -780,7 +780,6 @@ namespace Quantum.Editor {
         GUILayout.Label(TextInstallationInstructions);
 
         DrawButtonAction(Button_InstallQuantum,
-          enabled: _statusInstallationComplete == false,
           statusIcon: GetStatusIcon(_statusInstallationComplete),
           callback: () => {
             InstallAllUserFiles();

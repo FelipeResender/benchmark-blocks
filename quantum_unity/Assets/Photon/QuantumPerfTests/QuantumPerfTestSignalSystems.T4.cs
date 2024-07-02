@@ -1,7 +1,15 @@
-﻿using Quantum;
+using Quantum;
+using System;
 
-namespace Tests
+namespace Quantum.PerfTests 
 {
+  class SystemForSignalDelegateAttribute : Attribute {
+    public SystemForSignalDelegateAttribute(Type systemType) {
+      Type = systemType;
+    }
+    public Type Type { get; }
+  }
+
     [SystemForSignalDelegate(typeof(SystemISignalOnCollision2D))]
     public delegate void ISignalOnCollision2DDelegate(Frame f, CollisionInfo2D info);
     

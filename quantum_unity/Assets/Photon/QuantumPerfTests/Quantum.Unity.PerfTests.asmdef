@@ -1,5 +1,5 @@
 {
-    "name": "Tests",
+    "name": "Quantum.PerfTests",
     "rootNamespace": "",
     "references": [
         "UnityEngine.TestRunner",

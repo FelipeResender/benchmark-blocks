@@ -3,9 +3,17 @@
 <#@ import namespace="System.Collections.Generic" #>
 <#@ output extension=".cs" #>
 using Quantum;
+using System;
 
-namespace Tests
+namespace Quantum.PerfTests 
 {
+  class SystemForSignalDelegateAttribute : Attribute {
+    public SystemForSignalDelegateAttribute(Type systemType) {
+      Type = systemType;
+    }
+    public Type Type { get; }
+  }
+
 <#
     var signals = new[]
     {

@@ -61,3 +61,8 @@ csharp_preserve_single_line_statements = true
 
 # 'using' directive preferences
 csharp_using_directive_placement = inside_namespace:error
+
+# ReSharper properties
+resharper_int_align_assignments = true
+resharper_object_creation_when_type_not_evident = target_typed
+resharper_wrap_object_and_collection_initializer_style = chop_always

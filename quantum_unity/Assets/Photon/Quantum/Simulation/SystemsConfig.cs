@@ -226,7 +226,6 @@ namespace Quantum {
     /// Unity Reset() event will add all Quantum core default systems to the asset.
     /// </summary>
     public override void Reset() {
-      Entries.Clear();
       AddSystem<Core.CullingSystem2D>();
       AddSystem<Core.CullingSystem3D>();
       AddSystem<Core.PhysicsSystem2D>();

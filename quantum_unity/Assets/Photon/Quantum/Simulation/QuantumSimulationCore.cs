@@ -1139,7 +1139,7 @@ namespace Quantum {
       
       if (serializer.Stream is FrameChecksumerBitStream checksumStream) {
 
-        Profiling.HostProfiler.Start("CalculateChecksumInternal");
+        using var scope = HostProfiler.Markers.CalculateChecksumInternal.Start();
 
         try {
           serializer.Reset();
@@ -1158,7 +1158,6 @@ namespace Quantum {
           return checksumStream.Checksum;
         } finally {
           serializer.Frame = null;
-          Profiling.HostProfiler.End();
         }
       } else {
         throw new InvalidOperationException($"Serializer's stream needs to be of {nameof(FrameChecksumerBitStream)} type (is: {serializer.Stream?.GetType().FullName}");
@@ -1172,43 +1171,42 @@ namespace Quantum {
     protected sealed override void Copy(DeterministicFrame frame) {
       var f = (Frame)frame;
 
-      HostProfiler.Start("Frame Copy");
+      using (HostProfiler.Markers.FrameCopy.Start()) {
 
-      if (IsVerified) {
-        // TODO(Erick): fix and optimize size see DeterministicFrame.Init()
-        if (RawInputs == null) {
-          RawInputs = new int[1024 * 32];
+        if (IsVerified) {
+          // TODO(Erick): fix and optimize size see DeterministicFrame.Init()
+          if (RawInputs == null) {
+            RawInputs = new int[1024 * 32];
+          }
+
+          // only copy RawInputs into verified frame buffer, checksum and replay ring buffer, etc
+          Array.Copy(f.RawInputs, RawInputs, f.RawInputs.Length);
         }
-        // only copy RawInputs into verified frame buffer, checksum and replay ring buffer, etc
-        Array.Copy(f.RawInputs, RawInputs, f.RawInputs.Length);
+
+        // copy player data
+        _playerData = f._playerData;
+
+        using (HostProfiler.Markers.FrameCopyHeap.Start()) {
+          // copy heap from frame
+          Allocator.Heap.Copy(Context.Allocator, _frameHeap.HeapUnsafe, f._frameHeap.HeapUnsafe);
+        }
+
+        // copy entity registry
+        FrameBase.Copy(this, f);
+
+        // dynamic DB
+        DynamicAssetDB.CopyFrom(f.DynamicAssetDB);
+
+        // perform native copy
+
+        using (HostProfiler.Markers.FrameCopyGlobals.Start()) {
+          CopyFromGen(f);
+        }
+
+        using (HostProfiler.Markers.FrameCopyUser.Start()) {
+          CopyFromUser(f);
+        }
       }
-
-      // copy player data
-      _playerData = f._playerData;
-
-      HostProfiler.Start("Copy Heap");
-      // copy heap from frame
-      Allocator.Heap.Copy(Context.Allocator, _frameHeap.HeapUnsafe, f._frameHeap.HeapUnsafe);
-
-      HostProfiler.End();
-
-      // copy entity registry
-      FrameBase.Copy(this, f);
-
-      // dynamic DB
-      DynamicAssetDB.CopyFrom(f.DynamicAssetDB);
-
-      // perform native copy
-
-      HostProfiler.Start("Copy Globals");
-      CopyFromGen(f);
-      HostProfiler.End();
-
-      HostProfiler.Start("Copy User");
-      CopyFromUser(f);
-      HostProfiler.End();
-
-      HostProfiler.End();
     }
 
     public sealed override void Free() {
@@ -3266,55 +3264,54 @@ namespace Quantum {
       Buffer.BlockCopy(_inputSerializerWrite.Stream.Data, 0, result, 0, _inputSerializerWrite.Stream.BytesRequired);
     }
 
-    private static IntPtr _OnSimulateSection = HostProfiler.CreateMarker("QuantumGame.OnSimulate");
-    
     /// <summary>
     /// The callback is called when any simulation step was executed.
     /// </summary>
     /// <param name="state">Frame that was simulated</param>
     public void OnSimulate(DeterministicFrame state) {
-      HostProfiler.Start(_OnSimulateSection);
+      using var profilerScope = HostProfiler.Markers.OnSimulate.Start();
 
       var f = (Frame)state;
 
       try {
         // reset profiling
-        HostProfiler.Start("Init Profiler");
-        f.Context.ProfilerContext.Reset();
-        var profiler = f.Context.ProfilerContext.GetProfilerForTaskThread(0);
-        HostProfiler.End();
+        Profiler profiler;
+        using (HostProfiler.Markers.OnSimulateInitProfiler.Start()) {
+          f.Context.ProfilerContext.Reset();
+          profiler = f.Context.ProfilerContext.GetProfilerForTaskThread(0);
+        }
 
-        HostProfiler.Start("ApplyInputs");
-        //ApplyInputs(f);
-        ApplyInputs(f);
-        HostProfiler.End();
+        using (HostProfiler.Markers.OnSimulateApplyInputs.Start()) {
+          //ApplyInputs(f);
+          ApplyInputs(f);
+        }
 
-        HostProfiler.Start("OnSimulateBegin");
-        f.Context.OnFrameSimulationBegin(f);
-        f.OnFrameSimulateBegin();
-        f.Context.TaskContext.BeginFrame(f);
-        HostProfiler.End();
+        using (HostProfiler.Markers.OnSimulateBegin.Start()) {
+          f.Context.OnFrameSimulationBegin(f);
+          f.OnFrameSimulateBegin();
+          f.Context.TaskContext.BeginFrame(f);
+        }
 
         var handle = f.Context.TaskContext.AddRootTask();
 
-        HostProfiler.Start("UpdatePlayerData");
-        f.UpdatePlayerData(this);
-        HostProfiler.End();
+        using (HostProfiler.Markers.OnSimulateUpdatePlayerData.Start()) {
+          f.UpdatePlayerData(this);
+        }
 
         profiler.Start("Scheduling Tasks #ff9900");
-        HostProfiler.Start("Scheduling Tasks");
 
-        for (Int32 i = 0; i < _systemsRoot.Length; ++i) {
-          if (f.SystemIsEnabledSelf(_systemsRoot[i])) {
-            try {
-              handle = _systemsRoot[i].OnSchedule(f, handle);
-            } catch (Exception exn) {
-              LogSimulationException(exn);
+        using (HostProfiler.Markers.OnSimulateSchedulingTasks.Start()) {
+          for (Int32 i = 0; i < _systemsRoot.Length; ++i) {
+            if (f.SystemIsEnabledSelf(_systemsRoot[i])) {
+              try {
+                handle = _systemsRoot[i].OnSchedule(f, handle);
+              } catch (Exception exn) {
+                LogSimulationException(exn);
+              }
             }
           }
         }
 
-        HostProfiler.End();
         profiler.End();
 
         try {
@@ -3337,8 +3334,6 @@ namespace Quantum {
       } catch (Exception exn) {
         LogSimulationException(exn);
       }
-
-      HostProfiler.End(_OnSimulateSection);
     }
 
     /// <summary>
@@ -3702,14 +3697,13 @@ namespace Quantum {
     }
 
     void RaiseEvent(EventBase evnt) {
-      HostProfiler.Start("QuantumGame.InvokeEvents");
+      using var profilerScope = HostProfiler.Markers.RaiseEvent.Start();
       try {
         evnt.Game = this;
         _eventDispatcher?.Publish(evnt);
       } catch (Exception exn) {
         Log.Exception("## Event Callback Threw Exception ##", exn);
       }
-      HostProfiler.End();
     }
 
     void CancelPendingEvents() {
@@ -3723,7 +3717,7 @@ namespace Quantum {
 
 
     void InvokeEvents() {
-      HostProfiler.Start("QuantumGame.InvokeEvents");
+      using var profilerScope = HostProfiler.Markers.InvokeEvents.Start();
       while (_context.Events.Count > 0) {
         var head = _context.Events.PopHead();
         try {
@@ -3773,7 +3767,6 @@ namespace Quantum {
 
         InvokeOnEvent(key, confirmed);
       }
-      HostProfiler.End();
     }
   }
 }
@@ -4095,7 +4088,7 @@ namespace Quantum {
         return;
       }
 
-      HostProfiler.Start("QuantumGame.RecordingSnapshots");
+      using var profilerScope = HostProfiler.Markers.RecordingSnapshots.Start();
 
       if (_checksumSnapshotBuffer != null) {
         // in case replay interval is less than checksum interval and replay is not being recorded,
@@ -4119,8 +4112,6 @@ namespace Quantum {
           _instantReplaySnapshotBuffer.PushBack(state, this, _context);
         }
       }
-
-      HostProfiler.End();
     }
 
     Int32 SnapshotsCreateBuffers(Int32 simulationRate, Int32 checksumInterval, FP checksumTimeWindow, Int32 replayInterval, FP replayTimeWindow) {
@@ -5024,17 +5015,16 @@ namespace Quantum {
     }
 
     void InvokeOnUpdateView() {
-      HostProfiler.Start("QuantumGame.InvokeOnUpdateView");
+      using var profilerScope = HostProfiler.Markers.InvokeOnUpdateView.Start();
       try {
         _callbackDispatcher?.Publish(_callbackUpdateView);
       } catch (Exception ex) {
         Log.Exception(ex);
       }
-      HostProfiler.End();
     }
 
     void InvokeOnSimulateFinished(DeterministicFrame state) {
-      HostProfiler.Start("QuantumGame.InvokeOnSimulateFinished");
+      using var profilerScope = HostProfiler.Markers.InvokeOnSimulateFinished.Start();
       try {
         _callbackSimulateFinished.Frame = (Frame)state;
         _callbackDispatcher?.Publish(_callbackSimulateFinished);
@@ -5043,7 +5033,6 @@ namespace Quantum {
       }
 
       _callbackSimulateFinished.Frame = null;
-      HostProfiler.End();
     }
 
     void InvokeOnChecksumError(DeterministicTickChecksumError error, DeterministicFrame[] frames) {
@@ -5086,7 +5075,7 @@ namespace Quantum {
     }
 
     void InvokeOnChecksumErrorFrameDump(Int32 actorId, Int32 frameNumber, DeterministicSessionConfig sessionConfig, byte[] runtimeConfig, byte[] frameData, byte[] extraData, IAssetSerializer serializer) {
-      HostProfiler.Start("QuantumGame.InvokeOnChecksumErrorFrameDump");
+      using var profilerScope = HostProfiler.Markers.InvokeOnChecksumErrorFrameDump.Start();
       try {
 
         // find the frame that's going to be overwritten: 
@@ -5120,11 +5109,10 @@ namespace Quantum {
       } catch (Exception ex) {
         Log.Exception(ex);
       }
-      HostProfiler.End();
     }
 
     void InvokeOnEvent(EventKey key, bool confirmed) {
-      HostProfiler.Start("QuantumGame.InvokeOnEvent");
+      using var profilerScope = HostProfiler.Markers.InvokeOnEvent.Start();
       try {
         if (confirmed) {
           _callbackEventConfirmed.EventKey = key;
@@ -5138,7 +5126,6 @@ namespace Quantum {
       } catch (Exception ex) {
         Log.Exception(ex);
       }
-      HostProfiler.End();
     }
 
     void InvokeOnPluginDisconnect(string reason) {
@@ -7336,6 +7323,10 @@ namespace Quantum {
         set { GameParameters.GameFlags = value; }
       }
 
+      /// <summary>
+      ///  Validate, log warnings and throw exceptions on errors.
+      /// </summary>
+      /// <exception cref="SessionRunnerException">Communicator object invalid.</exception>
       public void Validate() {
         if (FrameData?.Length > 0 && (InitialDynamicAssets?.IsEmpty == false)) {
           Log.Warn(
@@ -7738,6 +7729,11 @@ namespace Quantum {
       return _waitForShutdownDone.Task;
     }
 
+    /// <summary>
+    /// Create runner object and initiates the start procedure.
+    /// </summary>
+    /// <param name="arguments">Start arguments.</param>
+    /// <returns>Initialized runner object.</returns>
     protected static SessionRunner CreateRunnerInternal(Arguments arguments) {
       arguments.RunnerId = arguments.RunnerId ?? "Default";
       var runner = arguments.RunnerFactory.CreateRunner(arguments);
@@ -7792,6 +7788,11 @@ namespace Quantum {
       return runner;
     }
 
+    /// <summary>
+    /// Internal shutdown method. 
+    /// </summary>
+    /// <param name="runner">Session runner object.</param>
+    /// <param name="cause">Shutdown code.</param>
     protected static void ShutdownInternal(SessionRunner runner, ShutdownCause cause) {
       Log.Info($"Shutting down runner '{runner.Id}'");
 
@@ -9126,14 +9127,30 @@ namespace Quantum.Core {
     /// <param name="f">The frame reference.</param>
     /// <param name="previousMap">The previous map.</param>
     public void OnMapChanged(Frame f, AssetRef<Map> previousMap) {
-      if (previousMap.Id.IsValid) {
-        foreach (var (entity, _) in f.GetComponentIterator<MapEntityLink>()) {
-          f.Destroy(entity);
+      // Destroy map entities if previous map is valid and the new map is not a dynamic map.
+      // Also destroy map entities if the new map is dynamic and the source map is not the previous map.
+      var dynamicMap = f.Map as DynamicMap;
+      var isDynamicMap = dynamicMap != null;
+      if (previousMap.Id.IsValid) { 
+        if (isDynamicMap == false || dynamicMap.SourceMap != previousMap) {
+          foreach (var (entity, _) in f.GetComponentIterator<MapEntityLink>()) {
+            f.Destroy(entity);
+          }
         }
       }
 
+      // Always create map entities from the new map.
       if (f.Map != null) {
         f.Create(f.Map.MapEntities, f.Map);
+
+        // Handle cases where a dynamic map was created based on a non-loaded map:
+        // If the new map is a dynamicMap, create map entities from the source map if the source map is different than the previous map.
+        if (isDynamicMap && dynamicMap.SourceMap != previousMap) {
+          var sourceMap = f.FindAsset(dynamicMap.SourceMap);
+          if (sourceMap != null) {
+            f.Create(f.Map.MapEntities, sourceMap);
+          }
+        }
       }
     }
   }
